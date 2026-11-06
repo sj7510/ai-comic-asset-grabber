@@ -1,0 +1,15 @@
+{
+  "name": "ai-comic-asset-grabber",
+  "version": "1.0.0",
+  "private": true,
+  "description": "浏览器扩展：扫描漫剧平台资产卡片，多选后按文件夹批量下载图片。",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test/unit.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "verify": "node test/unit.mjs && node build.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

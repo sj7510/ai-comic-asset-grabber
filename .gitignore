@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# build output (committed release zips live in release/)
+dist/
+
+# local test artifacts
+test/.tmp/
+test/.browsers/
+test/panel*.png
+test/chrome.log
+*.log
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# secrets
+*.pem
+*.key

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>漫剧资产库 · 演示</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0c0d13;
+    color: #e8eaf2;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+  }
+  .topbar {
+    height: 60px; display: flex; align-items: center; gap: 14px;
+    padding: 0 26px; border-bottom: 1px solid rgba(255,255,255,.07);
+    background: rgba(18,19,28,.85); position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(12px);
+  }
+  .logo {
+    width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(135deg,#8b5cf6,#4f46e5); font-size: 15px; color: #fff;
+  }
+  .topbar b { font-size: 15px; letter-spacing: .3px; }
+  .topbar .crumb { color: #7b8199; font-size: 12px; }
+  .spacer { flex: 1; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg,#334155,#1e293b); border: 1px solid rgba(255,255,255,.12); }
+  main { padding: 30px 430px 80px 40px; max-width: 1600px; }
+  @media (max-width: 1200px) { main { padding-right: 40px; } }
+  .page-head h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .5px; }
+  .page-head p { margin: 0; color: #7b8199; font-size: 12.5px; }
+  .tabs { display: flex; gap: 8px; margin: 22px 0 18px; flex-wrap: wrap; }
+  .tab {
+    height: 30px; padding: 0 14px; border-radius: 15px; font-size: 12.5px; color: #9aa0b6;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); cursor: pointer;
+  }
+  .tab.active { color: #ede9fe; background: rgba(139,92,246,.2); border-color: rgba(139,92,246,.5); }
+  .asset-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px;
+  }
+  .asset-card {
+    position: relative; margin: 0; padding: 10px; border-radius: 14px;
+    background: #151722; border: 1px solid rgba(255,255,255,.07);
+    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+  }
+  .asset-card:hover { transform: translateY(-2px); border-color: rgba(139,92,246,.45); box-shadow: 0 14px 34px rgba(0,0,0,.45); }
+  .asset-check {
+    position: absolute; top: 16px; left: 16px; z-index: 2; width: 16px; height: 16px;
+    accent-color: #8b5cf6; cursor: pointer;
+  }
+  .asset-shot { position: relative; }
+  .asset-shot img {
+    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; display: block;
+    background: #1b1d2a; border: 1px solid rgba(255,255,255,.05);
+  }
+  .media-slot { display: block; position: relative; }
+  .media-loading { display: none; }
+  .asset-optimize, .asset-download {
+    position: absolute; bottom: 8px; height: 24px; padding: 0 8px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,.14); background: rgba(12,13,19,.78); color: #d7dae8;
+    font-size: 11px; cursor: pointer; backdrop-filter: blur(6px); opacity: 0; transition: opacity .15s;
+  }
+  .asset-optimize { right: 62px; }
+  .asset-download { right: 8px; }
+  .asset-card:hover .asset-optimize, .asset-card:hover .asset-download { opacity: 1; }
+  .asset-card strong {
+    display: block; margin: 9px 2px 2px; font-size: 12.5px; font-weight: 550;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .asset-card > em { display: block; margin: 0 2px; font-style: normal; font-size: 10.5px; color: #5f657c; }
+  .add-btn {
+    position: fixed; left: 40px; bottom: 26px; height: 36px; padding: 0 16px; border-radius: 10px;
+    border: 1px solid rgba(139,92,246,.5); background: rgba(139,92,246,.16); color: #d8ccff;
+    font-size: 12.5px; cursor: pointer;
+  }
+  .hint {
+    position: fixed; right: 430px; bottom: 26px; font-size: 11.5px; color: #565c72;
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo">◈</div>
+    <b>漫剧工厂</b>
+    <span class="crumb">/ 项目 / 大胤前军 / 资产库</span>
+    <span class="spacer"></span>
+    <div class="avatar"></div>
+  </div>
+
+  <main>
+    <div class="page-head">
+      <h1>资产库</h1>
+      <p>演示页 · 结构与线上素材卡片一致，图片使用 blob: 地址</p>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active">全部 18</button>
+      <button class="tab">角色</button>
+      <button class="tab">道具</button>
+      <button class="tab">场景</button>
+    </div>
+
+    <section class="asset-grid" id="grid"></section>
+  </main>
+
+  <button class="add-btn" id="add-asset">+ 新增一个素材（测试自动同步）</button>
+  <div class="hint">图片为 canvas 生成的演示素材</div>
+
+<script>
+  var ASSETS = [
+    { type: 'character', label: '角色', name: '大胤前军·绯黑前军甲', colors: ['#3d1f4d', '#b83b5e'] },
+    { type: 'character', label: '角色', name: '云梦仙子·白露', colors: ['#1e3a5f', '#7cc6e8'] },
+    { type: 'character', label: '角色', name: '北境狼骑·苍牙', colors: ['#1d2b33', '#5d8a7a'] },
+    { type: 'character', label: '角色', name: '玄机阁主·墨渊', colors: ['#2a2140', '#6d4aff'] },
+    { type: 'prop', label: '道具', name: '玄铁重剑·断岳', colors: ['#33271c', '#b98a4f'] },
+    { type: 'prop', label: '道具', name: '引魂灯·青焰', colors: ['#12312f', '#3fd6b0'] },
+    { type: 'prop', label: '道具', name: '龙纹玉玺', colors: ['#3a1f1f', '#d8b25a'] },
+    { type: 'prop', label: '道具', name: '星盘·浑天', colors: ['#1b2340', '#7e8ff0'] },
+    { type: 'scene', label: '场景', name: '大胤皇城·雪夜', colors: ['#1b2438', '#95a7c9'] },
+    { type: 'scene', label: '场景', name: '云海仙宫·晨光', colors: ['#2b2148', '#e0a36b'] },
+    { type: 'scene', label: '场景', name: '北境荒原·残阳', colors: ['#3a2320', '#d97a4a'] },
+    { type: 'scene', label: '场景', name: '幽篁密林·雾', colors: ['#15281f', '#5f9e74'] },
+    { type: 'costume', label: '服装', name: '绯黑战袍', colors: ['#2a1620', '#9e3a5a'] },
+    { type: 'costume', label: '服装', name: '流云广袖裙', colors: ['#1f2a44', '#8fb8e8'] },
+    { type: 'effect', label: '特效', name: '业火焚天', colors: ['#3d1414', '#ff7a3d'] },
+    { type: 'effect', label: '特效', name: '星陨术', colors: ['#171436', '#8b7aff'] },
+    { type: 'character', label: '角色', name: '户部侍郎顾怀章（主要反派）', key: 'u1793949188727', colors: ['#331a2b', '#9c4d6e'] },
+    { type: 'character', label: '角色', name: '柳如烟', key: 'u1793949188728', noImage: true, colors: ['#223', '#445'] }
+  ];
+
+  function drawAsset(asset, index) {
+    if (asset.noImage) {
+      return new Promise(function (resolve) { resolve(''); });
+    }
+    var size = 640;
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+
+    var bg = ctx.createLinearGradient(0, 0, size, size);
+    bg.addColorStop(0, asset.colors[0]);
+    bg.addColorStop(1, asset.colors[1]);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, size, size);
+
+    var glow = ctx.createRadialGradient(size * 0.64, size * 0.32, 20, size * 0.64, size * 0.32, size * 0.62);
+    glow.addColorStop(0, 'rgba(255,255,255,.38)');
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.fillStyle = 'rgba(8,9,16,.34)';
+    if (asset.type === 'character' || asset.type === 'costume') {
+      ctx.beginPath();
+      ctx.arc(size * 0.5, size * 0.38, 74, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(size * 0.5 - 150, size * 0.94);
+      ctx.quadraticCurveTo(size * 0.5 - 130, size * 0.56, size * 0.5, size * 0.54);
+      ctx.quadraticCurveTo(size * 0.5 + 130, size * 0.56, size * 0.5 + 150, size * 0.94);
+      ctx.closePath();
+      ctx.fill();
+    } else if (asset.type === 'scene') {
+      ctx.beginPath();
+      ctx.moveTo(0, size * 0.86);
+      ctx.lineTo(size * 0.28, size * 0.5);
+      ctx.lineTo(size * 0.46, size * 0.72);
+      ctx.lineTo(size * 0.66, size * 0.4);
+      ctx.lineTo(size, size * 0.84);
+      ctx.lineTo(size, size);
+      ctx.lineTo(0, size);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(size * 0.74, size * 0.24, 44, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.fill();
+    } else if (asset.type === 'effect') {
+      ctx.translate(size / 2, size / 2);
+      for (var r = 0; r < 12; r++) {
+        ctx.rotate(Math.PI / 6);
+        ctx.beginPath();
+        ctx.moveTo(0, -40);
+        ctx.lineTo(26, -230);
+        ctx.lineTo(-26, -230);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, 58, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.22)';
+      ctx.fill();
+    } else {
+      ctx.translate(size / 2, size / 2);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-86, -86, 172, 172);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, 46, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.26)';
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,.16)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(22, 22, size - 44, size - 44);
+
+    ctx.fillStyle = 'rgba(255,255,255,.62)';
+    ctx.font = '500 22px "Microsoft YaHei", sans-serif';
+    ctx.fillText(asset.label + ' · ' + String(index + 1).padStart(2, '0'), 46, size - 46);
+    ctx.fillStyle = 'rgba(255,255,255,.3)';
+    ctx.font = '400 16px "Microsoft YaHei", sans-serif';
+    ctx.fillText('AI COMIC ASSET', 46, size - 74);
+
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(URL.createObjectURL(blob)); }, 'image/png');
+    });
+  }
+
+  function cardHtml(asset, src) {
+    var key = asset.key || (asset.type + ':' + asset.name);
+    var mediaHtml = asset.noImage
+      ? '<em class="media-loading">未生图</em>'
+      : '<em class="media-loading" hidden>加载中</em>' +
+        '<img alt="' + asset.name + '" loading="lazy" decoding="async" referrerpolicy="no-referrer" src="' + src + '">';
+    return '<article class="asset-card" data-asset="' + key + '">' +
+      '<input class="asset-check" type="checkbox" data-check="' + key + '">' +
+      '<div class="asset-shot is-done"><span class="media-slot is-media-ready">' +
+      mediaHtml +
+      '</span>' +
+      '<button type="button" class="asset-optimize" data-optimize-asset="' + key + '">优化</button>' +
+      '<button type="button" class="asset-download" data-download-asset="' + key + '">下载</button>' +
+      '</div>' +
+      '<strong>' + asset.name + '</strong><em>' + (asset.noImage ? '未生图' : '已生成') + '</em></article>';
+  }
+
+  var grid = document.getElementById('grid');
+
+  Promise.all(ASSETS.map(drawAsset)).then(function (urls) {
+    grid.innerHTML = ASSETS.map(function (asset, i) { return cardHtml(asset, urls[i]); }).join('');
+  });
+
+  document.getElementById('add-asset').addEventListener('click', function () {
+    var index = grid.children.length;
+    var asset = {
+      type: index % 2 ? 'character' : 'prop',
+      label: index % 2 ? '角色' : '道具',
+      name: '新生成素材·' + String(index + 1).padStart(2, '0'),
+      colors: ['#24304a', '#9a6ad8']
+    };
+    drawAsset(asset, index).then(function (url) {
+      grid.insertAdjacentHTML('beforeend', cardHtml(asset, url));
+    });
+  });
+</script>
+</body>
+</html>
