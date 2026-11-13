@@ -104,12 +104,48 @@ function downloadItem(item) {
   });
 }
 
+function arrayBufferToBase64(buffer) {
+  var bytes = new Uint8Array(buffer);
+  var binary = '';
+  var chunk = 0x8000;
+  for (var i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** Fetch an image in the extension context to bypass page CORS. */
+function fetchImage(url) {
+  return fetch(url, { credentials: 'include', cache: 'no-store' }).then(function (response) {
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    var mime = response.headers.get('content-type') || '';
+    return response.arrayBuffer().then(function (buffer) {
+      if (!buffer.byteLength) throw new Error('图片内容为空');
+      return { base64: arrayBufferToBase64(buffer), mime: mime };
+    });
+  });
+}
+
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg || typeof msg !== 'object') return;
 
   if (msg.type === 'assetgrab:ping') {
     sendResponse({ ok: true });
     return;
+  }
+
+  if (msg.type === 'assetgrab:fetch-image') {
+    if (!msg.url) {
+      sendResponse({ ok: false, error: '缺少图片地址' });
+      return;
+    }
+    fetchImage(msg.url).then(function (result) {
+      sendResponse({ ok: true, base64: result.base64, mime: result.mime });
+    }).catch(function (err) {
+      log('fetch image failed:', err && err.message);
+      sendResponse({ ok: false, error: (err && err.message) || '读取图片失败' });
+    });
+    return true;
   }
 
   if (msg.type === 'assetgrab:download') {

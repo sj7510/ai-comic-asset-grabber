@@ -174,7 +174,7 @@ def main():
     box(doc, [
         ("□  一台 Windows 电脑，已经装好 QQ 浏览器", False, DARK),
         ("□  拿到安装包 qq-mv3.zip（先放在桌面）", False, DARK),
-        ("□  平台网址：http://yinghuo.clouded.top:6912", False, DARK),
+        ("□  平台网址：https://photo.colo14.top/", False, DARK),
     ], fill="EEF2FF")
 
     # steps
@@ -218,7 +218,7 @@ def main():
     ], fill="FFF7E6")
 
     step(doc, 6, "打开平台页面")
-    bullet(doc, "在 QQ 浏览器打开：http://yinghuo.clouded.top:6912")
+    bullet(doc, "在 QQ 浏览器打开：https://photo.colo14.top/")
     bullet(doc, "登录你的账号。")
     bullet(doc, "进入「角色资产」页面。")
     bullet(doc, "按一下 F5 刷新页面。")
@@ -232,9 +232,10 @@ def main():
     step(doc, 7, "开始下载素材")
     bullet(doc, "在面板里勾选要的图片，或者点「全选」。")
     bullet(doc, "点底部的「下载」。")
-    bullet(doc, "输入文件夹名字，比如：第一集角色。")
-    bullet(doc, "点「开始下载」。")
-    bullet(doc, "打开「下载」文件夹，就能看到「第一集角色」文件夹。")
+    bullet(doc, "建议点「选择文件夹」，选一个保存位置，比如 D:\\角色资产。")
+    bullet(doc, "不选文件夹也可以，会保存到浏览器下载目录；这时在「文件夹名称」里输入名字。")
+    bullet(doc, "「重名时跳过，不覆盖」默认打勾；要覆盖同名文件就取消打勾。")
+    bullet(doc, "点「开始下载」，去你选的文件夹就能看到图片。")
 
     # FAQ
     p = doc.add_paragraph()
@@ -270,7 +271,7 @@ def main():
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(14)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_font(p.add_run("插件只对 yinghuo.clouded.top 这个网站生效，打开别的网站不会出现面板。"), 9.5, False, GRAY)
+    set_font(p.add_run("插件只对 photo.colo14.top 这个网站生效，打开别的网站不会出现面板。"), 9.5, False, GRAY)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     doc.core_properties.title = "漫剧素材抓取插件安装教程"

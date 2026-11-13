@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "漫剧素材抓取",
   "short_name": "素材抓取",
-  "version": "1.0.0",
-  "description": "抓取漫剧平台的人物、道具素材，在侧边栏多选后，按自定义文件夹批量下载。",
+  "version": "1.1.0",
+  "description": "抓取漫剧平台已生成的资产图片，在侧边栏多选后，按自定义文件夹批量下载。",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -25,8 +25,11 @@
     "scripting"
   ],
   "host_permissions": [
+    "https://photo.colo14.top/*",
+    "http://photo.colo14.top/*",
+    "https://yinghuo.clouded.top/*",
     "http://yinghuo.clouded.top/*",
-    "https://yinghuo.clouded.top/*"
+    "https://video-gen-uploads.tos-cn-beijing.volces.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -34,8 +37,10 @@
   "content_scripts": [
     {
       "matches": [
-        "http://yinghuo.clouded.top/*",
-        "https://yinghuo.clouded.top/*"
+        "https://photo.colo14.top/*",
+        "http://photo.colo14.top/*",
+        "https://yinghuo.clouded.top/*",
+        "http://yinghuo.clouded.top/*"
       ],
       "js": [
         "lib.js",

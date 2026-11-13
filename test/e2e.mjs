@@ -2,7 +2,7 @@
  * End-to-end test without any npm dependencies.
  *
  * - serves demo/index.html on 127.0.0.1:6912
- * - maps yinghuo.clouded.top to 127.0.0.1 via Chrome's --host-resolver-rules
+ * - maps photo.colo14.top to 127.0.0.1 via Chrome's --host-resolver-rules
  * - loads dist/qq-mv3 as an unpacked extension
  * - drives the floating panel through the Chrome DevTools Protocol
  * - verifies the downloaded folder and files on disk
@@ -28,7 +28,6 @@ const tmp = join(root, '.tmp');
 const profileDir = join(tmp, 'profile');
 const downloadDir = join(tmp, 'downloads');
 const logPath = join(tmp, 'chrome.log');
-const screenshotPath = join(root, 'panel.png');
 const debugPort = 9333;
 const FOLDER = 'E2E测试_素材';
 
@@ -144,11 +143,11 @@ async function main() {
     `--user-data-dir=${profileDir}`,
     `--disable-extensions-except=${extensionDir}`,
     `--load-extension=${extensionDir}`,
-    '--host-resolver-rules=MAP yinghuo.clouded.top 127.0.0.1',
+    '--host-resolver-rules=MAP photo.colo14.top 127.0.0.1',
     '--window-size=1500,1000',
     '--force-device-scale-factor=1',
     ...(process.env.E2E_SINGLE_PROCESS ? ['--single-process'] : []),
-    'http://yinghuo.clouded.top:6912/'
+    'http://photo.colo14.top:6912/'
   ];
 
   const chrome = spawn(chromePath, args, { stdio: ['ignore', logFd, logFd] });
@@ -168,7 +167,7 @@ async function main() {
 
     const target = await poll(async () => {
       const targets = await getTargets();
-      return targets.find((item) => item.type === 'page' && item.url.includes('yinghuo.clouded.top')) || null;
+      return targets.find((item) => item.type === 'page' && item.url.includes('photo.colo14.top')) || null;
     }, Boolean, 20000);
     log('page target:', target.url);
 
@@ -202,14 +201,14 @@ async function main() {
       return result.result.value;
     }
 
-    const cardCount = await evaluate(`document.querySelectorAll('article.asset-card[data-asset]').length`);
+    const cardCount = await evaluate(`document.querySelectorAll('article.asset-card').length`);
     log('page cards:', cardCount);
     log('targets:', (await getTargets()).map((item) => item.type + ':' + item.url).join(' | '));
     await sleep(1500);
     const diag = await evaluate(`({
       title: document.title,
       ready: document.readyState,
-      cards: document.querySelectorAll('article.asset-card[data-asset]').length,
+      cards: document.querySelectorAll('article.asset-card').length,
       grid: document.getElementById('grid') ? document.getElementById('grid').children.length : -1,
       hasScript: typeof ASSETS !== 'undefined',
       text: (document.body ? document.body.innerText : '').slice(0, 200)
@@ -239,9 +238,6 @@ async function main() {
     if (summary.rows !== 17) throw new Error(`expected 17 rows, got ${summary.rows}`);
     if (summary.brokenThumbs !== 0) throw new Error(`broken thumbnails: ${summary.brokenThumbs}`);
 
-    const shot = await page.send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(screenshotPath, Buffer.from(shot.data, 'base64'));
-    log('screenshot saved:', screenshotPath);
 
 
     // search filter
@@ -286,16 +282,11 @@ async function main() {
     if (selected !== '17') throw new Error(`select all expected 17, got ${selected}`);
     log('select all:', selected);
 
-    const selectedShot = await page.send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(join(root, 'panel-selected.png'), Buffer.from(selectedShot.data, 'base64'));
-
     await evaluate(`(() => {
       const sr = document.getElementById('asset-grabber-host').shadowRoot;
       sr.querySelector('[data-action="download"]').click();
     })()`);
     await sleep(250);
-    const dialogShot = await page.send('Page.captureScreenshot', { format: 'png' });
-    writeFileSync(join(root, 'panel-dialog.png'), Buffer.from(dialogShot.data, 'base64'));
 
     await evaluate(`(() => {
       const sr = document.getElementById('asset-grabber-host').shadowRoot;
@@ -382,7 +373,6 @@ async function main() {
     if (drag.after.left > drag.before.left - 100) throw new Error('panel did not move horizontally');
 
     console.log('\nE2E PASS');
-    console.log('screenshot:', screenshotPath);
     console.log('download folder:', join(downloadDir, FOLDER));
     console.log('files:', inFolder.length);
     if (consoleErrors.length) console.log('console errors:', consoleErrors.slice(0, 5));

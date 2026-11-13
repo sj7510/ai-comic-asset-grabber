@@ -50,6 +50,27 @@
     position: absolute; top: 16px; left: 16px; z-index: 2; width: 16px; height: 16px;
     accent-color: #8b5cf6; cursor: pointer;
   }
+  .asset-select { position: absolute; top: 16px; left: 16px; z-index: 2; }
+  .asset-select input { width: 16px; height: 16px; accent-color: #8b5cf6; cursor: pointer; }
+  .asset-card-copy {
+    display: block; width: 100%; padding: 0; border: 0; background: none;
+    color: inherit; text-align: left; font: inherit; cursor: pointer;
+  }
+  .asset-card-copy small { display: block; font-size: 10.5px; color: #5f657c; }
+  .asset-card-copy em { display: block; margin-top: 2px; font-style: normal; font-size: 10px; color: #5f657c; }
+  .asset-image-status {
+    display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+    margin-top: 6px; font-size: 10.5px; color: #5f657c;
+  }
+  .asset-image-status.success { color: #6ee7a8; }
+  .asset-image-status.generating { color: #f0a35e; }
+  .asset-image-status small { font-size: 9.5px; color: #565c72; }
+  .asset-card-actions { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+  .asset-card:hover .asset-card-actions { opacity: 1; }
+  .asset-card-actions button {
+    height: 22px; padding: 0 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,.1);
+    background: rgba(255,255,255,.04); color: #aab0c4; font-size: 10px; cursor: pointer;
+  }
   .asset-shot { position: relative; }
   .asset-shot img {
     width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; display: block;
@@ -127,7 +148,7 @@
     { type: 'effect', label: '特效', name: '业火焚天', colors: ['#3d1414', '#ff7a3d'] },
     { type: 'effect', label: '特效', name: '星陨术', colors: ['#171436', '#8b7aff'] },
     { type: 'character', label: '角色', name: '户部侍郎顾怀章（主要反派）', key: 'u1793949188727', colors: ['#331a2b', '#9c4d6e'] },
-    { type: 'character', label: '角色', name: '柳如烟', key: 'u1793949188728', noImage: true, colors: ['#223', '#445'] }
+    { type: 'character', label: '角色', name: 'Ethan Cole', key: 'u1793949188728', generating: true, colors: ['#223', '#445'] }
   ];
 
   function drawAsset(asset, index) {
@@ -222,20 +243,23 @@
   }
 
   function cardHtml(asset, src) {
-    var key = asset.key || (asset.type + ':' + asset.name);
-    var mediaHtml = asset.noImage
-      ? '<em class="media-loading">未生图</em>'
-      : '<em class="media-loading" hidden>加载中</em>' +
-        '<img alt="' + asset.name + '" loading="lazy" decoding="async" referrerpolicy="no-referrer" src="' + src + '">';
-    return '<article class="asset-card" data-asset="' + key + '">' +
-      '<input class="asset-check" type="checkbox" data-check="' + key + '">' +
-      '<div class="asset-shot is-done"><span class="media-slot is-media-ready">' +
-      mediaHtml +
-      '</span>' +
-      '<button type="button" class="asset-optimize" data-optimize-asset="' + key + '">优化</button>' +
-      '<button type="button" class="asset-download" data-download-asset="' + key + '">下载</button>' +
+    var statusText = asset.generating ? '生成中' : '图片已生成';
+    var statusClass = asset.generating ? 'generating' : 'success';
+    return '<article class="asset-card">' +
+      '<label class="asset-select"><input aria-label="选择' + asset.name + '" type="checkbox"><span></span></label>' +
+      '<div class="asset-shot is-done asset-image-wrap">' +
+      '<div class="media-slot is-media-ready asset-image-frame">' +
+      '<img class="media-generation-content" alt="' + asset.name + '资产图" loading="lazy" decoding="async" referrerpolicy="no-referrer" src="' + src + '">' +
       '</div>' +
-      '<strong>' + asset.name + '</strong><em>' + (asset.noImage ? '未生图' : '已生成') + '</em></article>';
+      '<div class="asset-image-status ' + statusClass + '"><span class="asset-status-dot"></span>' +
+      statusText + '<small>任务 media_test</small></div>' +
+      '</div>' +
+      '<button type="button" class="asset-card-copy" aria-label="查看' + asset.name + '详情">' +
+      '<strong>' + asset.name + '</strong><small>lead</small><em>episode-29</em></button>' +
+      '<div class="asset-card-actions"><button type="button">详情</button>' +
+      '<button type="button">重新生成</button><button type="button">优化</button>' +
+      '<button type="button">修复</button></div>' +
+      '</article>';
   }
 
   var grid = document.getElementById('grid');

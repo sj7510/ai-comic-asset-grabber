@@ -1,6 +1,6 @@
-﻿# 漫剧素材抓取插件 · AI 开发交接文档
+# 漫剧素材抓取插件 · AI 开发交接文档
 
-> 最后更新：2026-11-06  
+> 最后更新：2026-11-13（v1.1.0）  
 > 项目目录：`ai-comic-asset-grabber/`  
 > 用途：把这份文档连同代码一起交给任何 AI Agent，让它先读这里，再改代码。
 
@@ -20,7 +20,9 @@
 5. 不要重新加回「命名方式」下拉框，用户明确要求文件名就是素材名称。
 6. 不要重新加回「未生图」卡片，列表只显示有图片的「已生成」素材。
 7. 不要恢复「离屏缓存」：卡片离开 DOM 后，列表和选中状态都要一起删掉。
-8. 交互文案用中文，安装文档要写到非技术人员能照着点。
+8. 新站点只认状态文案「图片已生成」；`generating` / failed 卡片不要进列表。
+9. 自定义保存位置依赖 File System Access API：目录 handle 存在 IndexedDB，写入前必须检查重名；默认「跳过重名」。
+10. 交互文案用中文，安装文档要写到非技术人员能照着点。
 
 ---
 
@@ -28,20 +30,28 @@
 
 一个浏览器扩展（Chrome 内核），在「漫剧平台」的资产库页面右侧注入一个浮层面板：
 
-- 自动扫描页面里的素材卡片（图片 + 名称）；
+- 自动扫描页面里的素材卡片（图片 + 名称），只保留状态为「图片已生成」的卡片；
 - 列表展示缩略图、名称、类型、分辨率；
 - 支持多选、Shift 连选、全选 / 反选 / 清空、搜索、按类型筛选；
-- 点「下载」弹窗输入文件夹名，把选中的图片批量下载到浏览器下载目录下的同名文件夹；
+- 点「下载」后可以选择**任意保存文件夹**（File System Access API），批量写入；不选文件夹时回退到浏览器下载目录 + 文件夹名；
+- 下载前检查目标文件夹里是否已有同名文件，默认跳过（不覆盖），可在弹窗里取消勾选改为覆盖；
 - 面板可拖动，位置会记住；
-- 只显示当前页面 DOM 里「已生成」的素材。
+- 只显示当前页面 DOM 里已生成的素材。
 
-目标平台：
+目标平台（新）：
+
+```
+https://photo.colo14.top/
+```
+
+兼容旧平台：
 
 ```
 http://yinghuo.clouded.top:6912
 ```
 
-扩展只对这个域名（含任意端口）注入，其它网站不生效。
+扩展只对这两个域名（含任意端口）注入，其它网站不生效。图片 CDN：
+`https://video-gen-uploads.tos-cn-beijing.volces.com/`（新站图片的 host 权限）。
 
 ---
 
@@ -53,6 +63,10 @@ http://yinghuo.clouded.top:6912
 | 平台 | 优先 QQ 浏览器，其次主流浏览器 | Chromium 优先；MV3 + MV2 双包 |
 | DOM 变化 | `data-asset` 从 `character:名称` 变成纯 ID `u179...` | 名称改为优先读 `<strong>`，其次 `img[alt]` |
 | 扫描失败 | 面板显示 0 | 支持同源 iframe、开放 Shadow DOM 深度扫描；未生图跳过 |
+| 换站 | 新站 `photo.colo14.top`，卡片没有 `data-asset` | 站点适配器：按 hostname 选选择器；key 回退到图片 URL |
+| 新站状态 | 只要「图片已生成」 | `.asset-image-status` 文案/成功类校验，其它状态跳过 |
+| 保存位置 | 不要默认下载目录，要自定义路径 | 目录选择器 + 目录 handle 持久化 |
+| 重名 | 合作生成有重复资产，重名默认不下载 | 写入前 `getFileHandle` 检查；默认跳过，可关闭 |
 | 命名 | 下拉框空白，不要命名方式，默认名称 | 删除 `<select>`，文件名固定为素材名 |
 | 未生图 | 不要显示 | 扫描阶段直接跳过 `src` 为空的卡片 |
 | 离屏 | 不要保留离屏素材，关闭/刷新只展示当前页 | 每次扫描只保留当前 DOM，选中 key 同步裁剪 |
@@ -94,7 +108,7 @@ ai-comic-asset-grabber/
 │   ├── manifest.mv2.json
 │   └── icons/                 # 16/32/48/128 图标
 ├── demo/
-│   ├── index.html             # 本地演示页，模拟 18 个卡片（17 有图 + 1 未生图）
+│   ├── index.html             # 本地演示页，新站 DOM：18 个卡片（17 已生成 + 1 生成中）
 │   └── server.mjs             # 127.0.0.1:6912 静态服务器
 ├── test/
 │   ├── unit.mjs               # 12 个纯逻辑测试
@@ -138,68 +152,104 @@ ai-comic-asset-grabber/
 
 ---
 
-## 5. 真实站点 DOM（两种形态都要兼容）
+## 5. 站点 DOM 与适配器
 
-### 形态 A：带类型前缀
+### 5.1 新站（主）：`photo.colo14.top`
+
+```html
+<article class="asset-card">
+  <label class="asset-select">
+    <input aria-label="选择Emma Carter" type="checkbox"><span></span>
+  </label>
+
+  <div class="asset-image-wrap" aria-busy="false">
+    <div class="asset-image-frame media-generation-surface is-media-ready">
+      <img class="media-generation-content" alt="Emma Carter资产图"
+           referrerpolicy="no-referrer"
+           src="https://video-gen-uploads.tos-cn-beijing.volces.com/results/xxx.png">
+      <button class="asset-thumbnail-hitarea">查看大图 ↗</button>
+    </div>
+    <div class="asset-image-status success" role="status">
+      <span class="asset-status-dot"></span>图片已生成
+      <small>任务 media_...</small>
+      <a href="/gateway/media/jobs/media_.../download/0">下载图片</a>
+    </div>
+  </div>
+
+  <button class="asset-card-copy" aria-label="查看Emma Carter详情">
+    <strong>Emma Carter</strong>
+    <small>lead</small>
+    <em>episode-29 · episode-30</em>
+  </button>
+
+  <div class="asset-card-actions">...</div>
+  <p class="character-prompt-status success">资产提示词可用</p>
+</article>
+```
+
+规则：
+
+- 卡片：`article.asset-card`。
+- 状态：`.asset-image-status`，文本必须包含 **「图片已生成」**，或带 `success` 类；`生成中` / 失败卡片跳过。
+- 名称：`.asset-card-copy strong`；回退 `img[alt]`（去掉结尾「资产图」）→ `.asset-select input[aria-label]`（去掉开头「选择」）。
+- 图片：`img.media-generation-content`；回退 `.asset-image-frame img`，再回退 `img`。
+- 没有 `data-asset`；key 用图片 URL 去掉 query（`https://...png`），保证同一张图在重扫时稳定。
+- 类型未知，统一 `type=other`、`typeLabel=素材`。
+- 图片是 CDN 上的完整生成图（不是 640 预览），host 为 `video-gen-uploads.tos-cn-beijing.volces.com`。
+
+### 5.2 旧站（兼容）：`yinghuo.clouded.top`
 
 ```html
 <article class="asset-card" data-asset="character:大胤前军·绯黑前军甲">
-  ...
+  <span class="media-slot"><img src="blob:http://yinghuo.clouded.top:6912/..."></span>
   <strong>大胤前军·绯黑前军甲</strong>
-  <em>已生成</em>
 </article>
 ```
 
-### 形态 B：纯 ID（后来改成这样）
+- 名称：`:scope > strong`。
+- 图片：`.media-slot img` → `img`。
+- key：`data-asset`（`type:name` 或纯 ID）。
+- 没有状态过滤。
+- 旧站图片是 `blob:`，只在页面存活期间有效。
 
-```html
-<article class="asset-card" data-asset="u1793949188727">
-  <input class="asset-check" type="checkbox" data-check="u1793949188727">
-  <div class="asset-shot is-done">
-    <span class="media-slot is-media-ready">
-      <em class="media-loading" hidden>加载中</em>
-      <img alt="户部侍郎顾怀章（主要反派）"
-           data-cache="ast_01M6QV8KC73E351E37B99F|640"
-           loading="lazy" decoding="async" referrerpolicy="no-referrer"
-           src="blob:http://yinghuo.clouded.top:6912/dc1c0553-...">
-    </span>
-    <button class="asset-optimize">优化</button>
-    <button class="asset-download">下载</button>
-  </div>
-  <strong>户部侍郎顾怀章（主要反派）</strong>
-  <em>已生成</em>
-</article>
-```
-
-### 扫描规则
+### 5.3 适配器实现
 
 ```js
-var SITE = {
-  card: 'article.asset-card',
-  media: '.media-slot img',
-  image: 'img',
-  name: ':scope > strong'
-};
+var ADAPTERS = [
+  {
+    hosts: ['photo.colo14.top'],
+    card: 'article.asset-card',
+    image: 'img.media-generation-content',
+    name: '.asset-card-copy strong',
+    altSuffix: '资产图',
+    status: '.asset-image-status',
+    statusText: '图片已生成'
+  },
+  {
+    hosts: ['yinghuo.clouded.top'],
+    card: 'article.asset-card',
+    media: '.media-slot img',
+    image: 'img',
+    name: ':scope > strong'
+  }
+];
+var SITE = pickSite();   // 按 location.hostname 选
 ```
 
-- 卡片：`article.asset-card`（**不要求** `data-asset` 含冒号）。
-- key：`data-asset` → 没有则 `data-key` → 没有则 `auto:名称:序号`。
-- 名称优先级：`<strong>` 文本 → `img[alt]` → `data-asset` 解析结果。
-- 图片优先级：`currentSrc` → `src` → `data-src` → `data-original`。
-- 没有 `src` 的卡片（未生图）直接跳过。
-- 名称里的全角括号、`·` 原样保留。
+### 5.4 图片字节怎么拿
 
-### 为什么图片是 `blob:`
+- 新站是跨域 HTTPS：
+  1. 先尝试内容脚本 `fetch(src)`（CDN 允许 CORS 时最快）；
+  2. 失败则 `chrome.runtime.sendMessage({type:'assetgrab:fetch-image', url})`；
+  3. 后台用扩展权限 `fetch`，返回 base64 + MIME；
+  4. 内容脚本转 Blob，写入本地目录或转 data URL。
+- 旧站是 `blob:`：内容脚本直接 `fetch`；失败时把 `<img>` 画进 canvas 兜底。
+- background 需要 `video-gen-uploads.tos-cn-beijing.volces.com` 的 host 权限；CDN 换域名时必须同步 manifest。
 
-平台把图片缓存在页面里，`src` 是 `blob:http://yinghuo.clouded.top:6912/...`。这种地址：
+### 5.5 画质
 
-- 只在页面存活期间有效，卡片被移除/页面刷新后可能失效；
-- 必须在页面上下文 `fetch()` 取字节，不能直接丢给 `chrome.downloads`；
-- 因此下载时先 `fetch` → `FileReader` 转 data URL → 发消息给后台。
-
-### 画质限制
-
-DOM 里 `data-cache` 是 `...|640`，说明页面渲染的是 **640 宽预览图**。插件抓的就是这张预览图，不是平台原图。若以后平台提供原图接口，需要改 `scanPage()` 的 `src` 取值或 `getAssetBlob()`。
+- 新站 `src` 指向 CDN 上的生成结果，通常是原图，不是 640 预览。
+- 旧站 `data-cache` 是 `...|640`，抓到的是 640 宽预览图。
 
 ---
 
@@ -211,25 +261,31 @@ DOM 里 `data-cache` 是 `...|640`，说明页面渲染的是 **640 宽预览图
   ▼
 state.assets[] ──► render() ──► Shadow DOM 面板
   │                                │
-  │ 勾选                           │ 输入文件夹名
+  │ 勾选                           │ 下载（可选自定义目录）
   ▼                                ▼
 state.selected(Set)           runDownload()
-                                   │ getAssetBlob() → fetch(blob)
-                                   │ blobToDataUrl()
+                                   │ getAssetBlob()
+                                   │  ├─ 内容脚本 fetch(HTTPS/blob)
+                                   │  └─ 失败 → background fetch-image → base64
                                    ▼
-                     chrome.runtime.sendMessage({type:'assetgrab:download', item})
-                                   ▼
-                     background.downloadItem()
-                                   ▼
-              chrome.downloads.download({filename: '文件夹/名称.png'})
+                 ┌─────────────────┴─────────────────┐
+                 │ 已选文件夹（File System Access）   │ 未选文件夹（默认）
+                 ▼                                   ▼
+     writeBlobToDir(dir, blob, name, overwrite)   blobToDataUrl()
+       ├─ getFileHandle 检查重名                    → runtime.sendMessage(download)
+       ├─ 重名且勾选跳过 → skipped                   → chrome.downloads.download
+       └─ createWritable().write(blob)               （conflictAction=uniquify）
 ```
 
 ### 关键存储
 
 | Key | 位置 | 内容 |
 | --- | --- | --- |
-| `assetgrab:settings` | `chrome.storage.local` | `{ folder, pattern:'name', autoOpen, pos:{left,top,width,height} }` |
+| `assetgrab:settings` | `chrome.storage.local` | `{ folder, pattern:'name', autoOpen, pos:{left,top,width,height}, skipExisting }` |
 | `assetgrab:closed` | `sessionStorage` | 当前标签页关过面板，避免自动弹出 |
+| `saveDir` | 页面 origin 的 IndexedDB（`assetgrab-fs` / `handles`） | 用户选择的目录 `FileSystemDirectoryHandle` |
+
+> 目录 handle 存在**页面 origin** 的 IndexedDB 里（content script 与页面同源），不是 `chrome.storage`；`chrome.storage` 不能结构化克隆 handle。
 
 ### 消息
 
@@ -237,18 +293,27 @@ state.selected(Set)           runDownload()
 | --- | --- | --- |
 | `assetgrab:ping` | 后台 → 内容脚本 | 判断页面是否已注入 |
 | `assetgrab:toggle` | 后台 → 内容脚本 | 打开/关闭面板 |
-| `assetgrab:download` | 内容脚本 → 后台 | 下载单张图 |
+| `assetgrab:fetch-image` | 内容脚本 → 后台 | 跨域图片取字节，返回 base64 + MIME |
+| `assetgrab:download` | 内容脚本 → 后台 | 默认目录模式下载单张图 |
 | `assetgrab:download-check` | 调试用 | 查询最近下载 |
 
 ### 下载细节
 
 - 文件名：`sanitizeFilename(名称)` + 扩展名，**没有序号前缀**。
 - 扩展名：MIME → 文件头 sniff → 兜底 `png`。
-- `conflictAction: 'uniquify'`，重名自动加 `(1)`。
+- **自定义目录模式**：
+  - 目录 handle 通过 `showDirectoryPicker({mode:'readwrite'})` 获取；
+  - 写入前 `getFileHandle(name)` 判断是否存在；
+  - `skipExisting=true`（默认）时，存在就跳过并计数，不覆盖；
+  - 取消勾选后 `createWritable()` 直接覆盖；
+  - 目录权限失效时提示重新选择。
+- **默认下载目录模式**：
+  - `conflictAction: 'uniquify'`，重名自动加 `(1)`，**无法跳过**（浏览器 API 不能扫描下载目录）；
+  - 弹窗里的「重名跳过」会禁用，并提示先选文件夹。
 - 每张间隔约 60ms，避免瞬间大量下载。
 - 单张 fetch 超时 20 秒；失败不影响其它图片。
-- 若 `fetch(blob)` 失败，回退到把 `<img>` 画进 canvas 导出 PNG。
 - 若返回 `text/html` / `application/json`，视为失败，避免把登录页存成图片。
+
 
 ---
 
@@ -306,6 +371,28 @@ Edge 92 的旧渲染器截图中文字会显得纵向被压扁，但同一份代
 向下拖时自动缩短高度（`window.innerHeight - top - 8`），保证底部按钮可见。
 双击标题栏清空 `settings.pos` 恢复默认。
 
+### 7.9 自定义目录不是下载 API
+
+`chrome.downloads.download` 只能写到默认下载目录，不能选任意路径。自定义路径只能用 File System Access：
+
+- `showDirectoryPicker` 必须在**用户点击**里调用，且页面是 HTTPS；
+- 目录 handle 存页面 origin 的 IndexedDB；浏览器重启后可能变 `prompt`，需要 `requestPermission`；
+- 不选文件夹时回退到 downloads API，此时无法扫描重名；
+- QQ / 旧 Chromium 可能不支持，按钮会禁用。
+
+### 7.10 新站图片是跨域 CDN
+
+新站 `img.src` 是 `https://video-gen-uploads.tos-cn-beijing.volces.com/...`。内容脚本直接 `fetch` 可能被 CORS 拦，必须：
+
+- manifest 加该 CDN 的 host 权限；
+- 后台 `fetch-image` 兜底，返回 base64；
+- CDN 换域名时同步 manifest，否则下载会失败。
+
+### 7.11 重名默认跳过
+
+合作生成会出现同名资产。默认 `skipExisting=true`，写入前 `getFileHandle` 检查，存在就跳过。
+只有在**已选择文件夹**时有效；默认下载目录模式仍是 `uniquify`（加 `(1)`）。
+
 ---
 
 ## 8. 测试
@@ -325,7 +412,7 @@ node test/unit.mjs
 - 启动 `demo/server.mjs`（127.0.0.1:6912）
 - 用 `--host-resolver-rules=MAP yinghuo.clouded.top 127.0.0.1` 让演示页命中真实 host 权限
 - 加载 `dist/qq-mv3` 或 `dist/qq-mv2`
-- 验证：18 个卡片 → 面板 17 行（跳过 1 个未生图）→ 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png`
+- 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png`
 - 再删掉 1 个卡片，验证列表 16 行、已选 16
 - 用 PointerEvent 拖标题栏，验证面板 left 移动 ≥100px
 
@@ -351,7 +438,7 @@ node test/e2e.mjs
 - `E2E_HEADED`：非空则显示窗口（老 Edge 下载需要）。
 - `E2E_SINGLE_PROCESS`：调试用，一般不需要。
 
-测试会写 `test/.tmp/`（profile、下载目录、chrome.log），`test/` 下还会生成 `panel.png`、`panel-selected.png`、`panel-dialog.png`。这些是临时产物，可删。
+测试会写 `test/.tmp/`（profile、下载目录、chrome.log）。截图已从 E2E 移除，避免 Edge 92 截图卡住。
 
 Chrome for Testing 可以用镜像下载：
 
@@ -363,8 +450,9 @@ https://cdn.npmmirror.com/binaries/chrome-for-testing/<version>/win64/chrome-win
 
 ### 已验证环境
 
-- Chrome for Testing 157 + `dist/qq-mv3`：早期版本下载、命名、文件夹校验通过。
-- Edge 92 + `dist/qq-mv2`：17/17 下载通过；删除卡片同步；拖动通过（最新的离屏裁剪 / 拖动改动在 MV2 上复测，content.js 与 MV3 共用）。
+- Edge 92 + `dist/qq-mv2`（v1.1.0）：新站演示 DOM 18 卡片 → 17 行；17/17 下载通过；删除卡片同步；拖动通过。
+- Chrome for Testing 157 + `dist/qq-mv3`：v1.0.0 下载/命名/文件夹校验通过；v1.1.0 的扫描/下载逻辑与 MV2 共用，但**新站 MV3 未复测**。
+- 自定义保存文件夹：File System Access 的系统目录选择器无法自动化，需在真实 HTTPS 页面手动验证（选目录、重名跳过、覆盖、权限失效）。
 - QQ 浏览器：**未实机验证**（本机未安装），只按 Chromium 兼容处理。
 
 ---
@@ -465,14 +553,26 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 - 每次改完要给出**可验证的结果**（截图、测试数字、实际文件名）。
 - 安装文档要“奶奶级”：大字号、编号步骤、每步一个动作、明确写出去哪里点什么。
 - 文件名 = 素材名称，不要序号前缀。
-- 只显示有图素材。
+- 只显示状态为「图片已生成」的素材。
 - 不要离屏缓存。
 - 面板要能拖动、记住位置。
-- 权限尽量小，只声明目标域名。
+- 保存位置要能自定义，不要只写浏览器下载目录。
+- 重名默认跳过，不覆盖（可手动取消勾选）。
+- 权限尽量小，只声明目标域名与图片 CDN。
 
 ---
 
 ## 13. 变更记录
+
+### 2026-11-13 · v1.1.0
+
+- 适配新站 `https://photo.colo14.top/`：新的卡片 DOM、状态校验、名称/图片选择器。
+- 只抓「图片已生成」的卡片；`生成中` / 失败状态跳过。
+- 新增自定义保存文件夹（File System Access API），目录 handle 持久化。
+- 新增重名检查：默认跳过同名文件，可取消勾选改为覆盖。
+- 新站图片改为跨域 HTTPS，新增后台 `fetch-image` 兜底与 CDN host 权限。
+- 兼容旧站 `yinghuo.clouded.top` 的 blob 卡片。
+- 更新演示页、E2E、安装教程、README 与版本文档。
 
 ### 2026-11-06 · v1.0.0
 
@@ -493,9 +593,11 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 
 - [ ] `node test/unit.mjs` 通过（12 项）。
 - [ ] `node build.mjs` 能生成两个目录。
-- [ ] `dist/qq-mv3/manifest.json` 的域名、权限没被误改。
-- [ ] 面板只显示有图卡片，没有「未生图」。
+- [ ] `dist/qq-mv3/manifest.json` 包含 `photo.colo14.top`、`yinghuo.clouded.top` 和图片 CDN，权限没被误改。
+- [ ] 面板只显示「图片已生成」的卡片，`生成中` / 失败状态不出现。
 - [ ] 文件名是 `名称.png`，没有 `001_`。
+- [ ] 弹窗能「选择文件夹」；默认勾选「重名时跳过」。
+- [ ] 重名文件会被跳过；取消勾选后能覆盖。
 - [ ] 删掉页面卡片后，面板行数和已选数同步减少。
 - [ ] 拖动标题栏能移动，双击能复位。
 - [ ] 安装文档第 5 步仍然在讲「关闭每次下载询问保存位置」。

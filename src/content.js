@@ -17,12 +17,41 @@
     return;
   }
 
-  var SITE = {
-    card: 'article.asset-card',
-    media: '.media-slot img',
-    image: 'img',
-    name: ':scope > strong'
-  };
+  var ADAPTERS = [
+    {
+      // New site: photo.colo14.top
+      hosts: ['photo.colo14.top'],
+      card: 'article.asset-card',
+      image: 'img.media-generation-content',
+      name: '.asset-card-copy strong',
+      altSuffix: '资产图',
+      status: '.asset-image-status',
+      statusText: '图片已生成'
+    },
+    {
+      // Legacy site: yinghuo.clouded.top (keep working)
+      hosts: ['yinghuo.clouded.top'],
+      card: 'article.asset-card',
+      media: '.media-slot img',
+      image: 'img',
+      name: ':scope > strong'
+    }
+  ];
+
+  function pickSite() {
+    var host = location.hostname;
+    for (var i = 0; i < ADAPTERS.length; i++) {
+      var hosts = ADAPTERS[i].hosts || [];
+      for (var j = 0; j < hosts.length; j++) {
+        if (host === hosts[j] || host.slice(-(hosts[j].length + 1)) === '.' + hosts[j]) {
+          return ADAPTERS[i];
+        }
+      }
+    }
+    return ADAPTERS[0];
+  }
+
+  var SITE = pickSite();
 
   var HOST_ID = 'asset-grabber-host';
   var SETTINGS_KEY = 'assetgrab:settings';
@@ -47,8 +76,9 @@
     downloading: false,
     cancelRequested: false,
     autoOpenTried: false,
+    dirHandle: null,
     scanStats: { cards: 0, withImage: 0, roots: 1, frames: 0, shadows: 0 },
-    settings: { folder: '', pattern: 'name', autoOpen: true, pos: null }
+    settings: { folder: '', pattern: 'name', autoOpen: true, pos: null, skipExisting: true }
   };
 
   var toastTimer = 0;
@@ -111,6 +141,7 @@
       if (saved && typeof saved === 'object') {
         if (typeof saved.folder === 'string') state.settings.folder = saved.folder;
         if (typeof saved.autoOpen === 'boolean') state.settings.autoOpen = saved.autoOpen;
+        if (typeof saved.skipExisting === 'boolean') state.settings.skipExisting = saved.skipExisting;
         if (saved.pos && typeof saved.pos === 'object' &&
             isFinite(saved.pos.left) && isFinite(saved.pos.top)) {
           state.settings.pos = {
@@ -129,6 +160,127 @@
     var payload = {};
     payload[SETTINGS_KEY] = state.settings;
     LIB.storage.set(payload).catch(function () { /* ignore */ });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Custom save folder (File System Access API)                         */
+  /* ------------------------------------------------------------------ */
+
+  var FS_DB = 'assetgrab-fs';
+  var FS_STORE = 'handles';
+  var FS_KEY = 'saveDir';
+  var fsDbPromise = null;
+
+  function supportsDirectoryPicker() {
+    return typeof window.showDirectoryPicker === 'function' && !!window.isSecureContext;
+  }
+
+  function openFsDb() {
+    if (fsDbPromise) return fsDbPromise;
+    fsDbPromise = new Promise(function (resolve, reject) {
+      var req = indexedDB.open(FS_DB, 1);
+      req.onupgradeneeded = function () {
+        if (!req.result.objectStoreNames.contains(FS_STORE)) {
+          req.result.createObjectStore(FS_STORE);
+        }
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error || new Error('无法打开本地存储')); };
+    });
+    return fsDbPromise;
+  }
+
+  function idbRequest(req) {
+    return new Promise(function (resolve, reject) {
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error || new Error('本地存储操作失败')); };
+    });
+  }
+
+  function loadDirHandle() {
+    return openFsDb().then(function (db) {
+      var tx = db.transaction(FS_STORE, 'readonly');
+      return idbRequest(tx.objectStore(FS_STORE).get(FS_KEY));
+    }).then(function (handle) {
+      if (handle) state.dirHandle = handle;
+    }).catch(function () { /* IndexedDB may be unavailable */ });
+  }
+
+  function persistDirHandle(handle) {
+    return openFsDb().then(function (db) {
+      var tx = db.transaction(FS_STORE, 'readwrite');
+      return idbRequest(tx.objectStore(FS_STORE).put(handle, FS_KEY));
+    });
+  }
+
+  function clearDirHandle() {
+    state.dirHandle = null;
+    return openFsDb().then(function (db) {
+      var tx = db.transaction(FS_STORE, 'readwrite');
+      return idbRequest(tx.objectStore(FS_STORE).delete(FS_KEY));
+    }).catch(function () { /* ignore */ });
+  }
+
+  function ensureDirPermission() {
+    if (!state.dirHandle) return Promise.resolve(false);
+    var options = { mode: 'readwrite' };
+    return state.dirHandle.queryPermission(options).then(function (permission) {
+      if (permission === 'granted') return true;
+      return state.dirHandle.requestPermission(options).then(function (next) {
+        return next === 'granted';
+      });
+    }).catch(function () { return false; });
+  }
+
+  function chooseDirectory() {
+    if (!supportsDirectoryPicker()) {
+      toast('当前浏览器不支持自定义文件夹，将使用默认下载目录', 'error', 5000);
+      return Promise.resolve();
+    }
+    var picker = window.showDirectoryPicker.bind(window);
+    return Promise.resolve().then(function () {
+      return picker({ id: 'assetgrab-save', mode: 'readwrite' });
+    }).catch(function (error) {
+      if (error && error.name === 'AbortError') return null;
+      // Older Chromium may not accept options; retry without them.
+      if (error && error.name === 'TypeError') return picker();
+      throw error;
+    }).then(function (handle) {
+      if (!handle) return null;
+      return handle.requestPermission({ mode: 'readwrite' }).then(function (permission) {
+        if (permission !== 'granted') throw new Error('没有获得文件夹写入权限');
+        state.dirHandle = handle;
+        updateSaveLocationUI();
+        updatePreview();
+        persistDirHandle(handle).catch(function () { /* 下次重新选即可 */ });
+        toast('保存位置：' + handle.name);
+      });
+    }).catch(function (error) {
+      toast('选择文件夹失败：' + ((error && error.message) || error), 'error', 5000);
+    });
+  }
+
+  function fileExistsInDir(dir, filename) {
+    return dir.getFileHandle(filename).then(function () {
+      return true;
+    }).catch(function (error) {
+      if (error && error.name === 'NotFoundError') return false;
+      if (error && error.name === 'TypeMismatchError') return true;
+      throw error;
+    });
+  }
+
+  function writeBlobToDir(dir, blob, filename, overwrite) {
+    return fileExistsInDir(dir, filename).then(function (exists) {
+      if (exists && !overwrite) return 'skipped';
+      return dir.getFileHandle(filename, { create: true }).then(function (fileHandle) {
+        return fileHandle.createWritable().then(function (writable) {
+          return writable.write(blob).then(function () {
+            return writable.close();
+          });
+        });
+      }).then(function () { return 'saved'; });
+    });
   }
 
   /* ------------------------------------------------------------------ */
@@ -260,6 +412,12 @@
     '.field select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8f95ab 50%),',
     'linear-gradient(135deg,#8f95ab 50%,transparent 50%);background-position:calc(100% - 15px) 15px,calc(100% - 10px) 15px;',
     'background-size:5px 5px;background-repeat:no-repeat;padding-right:28px}',
+    '.save-location-row{display:flex;align-items:center;gap:8px;min-width:0}',
+    '.dir-name{flex:1;min-width:0;font-size:11.5px;color:#a5abbe;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.modal-tip{margin:-5px 0 10px;font-size:10.5px;color:#6f7590;line-height:1.45}',
+    '.check-line{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:12px;color:#c3c8d8;',
+    'cursor:pointer;user-select:none;-webkit-user-select:none}',
+    '.check-line input{width:15px;height:15px;accent-color:#8b5cf6;flex:none;margin:0}',
     '.path-preview{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:8px;',
     'background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.05);margin-bottom:14px}',
     '.path-preview span{font-size:10.5px;color:#6f7590}',
@@ -338,10 +496,20 @@
     '    <div class="modal" id="modal" hidden>',
     '      <div class="modal-card">',
     '        <h3>下载所选素材</h3>',
-    '        <p class="modal-sub">共 <b id="modal-count">0</b> 个文件，将保存到浏览器下载目录</p>',
-    '        <label class="field"><span>文件夹名称</span>',
+    '        <p class="modal-sub">共 <b id="modal-count">0</b> 个文件</p>',
+    '        <div class="field"><span>保存位置</span>',
+    '          <div class="save-location-row">',
+    '            <button class="btn ghost sm" data-action="pick-dir" id="pick-dir-btn">选择文件夹</button>',
+    '            <span class="dir-name" id="dir-name">默认下载目录</span>',
+    '            <button class="link-btn" data-action="clear-dir" id="clear-dir-btn" hidden>清除</button>',
+    '          </div>',
+    '        </div>',
+    '        <p class="modal-tip" id="dir-hint">不选文件夹则保存到浏览器下载目录</p>',
+    '        <label class="field" id="folder-field"><span>文件夹名称（未选保存位置时使用）</span>',
     '          <input id="folder-input" maxlength="60" spellcheck="false" autocomplete="off">',
     '        </label>',
+    '        <label class="check-line"><input id="skip-existing" type="checkbox" checked>',
+    '          <span>重名时跳过，不覆盖</span></label>',
     '        <div class="path-preview"><span>保存为</span><code id="path-preview"></code></div>',
     '        <div class="modal-actions">',
     '          <button class="btn ghost" data-action="modal-cancel">取消</button>',
@@ -517,6 +685,16 @@
         break;
       case 'download':
         openModal();
+        break;
+      case 'pick-dir':
+        chooseDirectory();
+        break;
+      case 'clear-dir':
+        clearDirHandle().then(function () {
+          updateSaveLocationUI();
+          updatePreview();
+          toast('已恢复默认下载目录');
+        });
         break;
       case 'cancel':
         if (state.downloading) {
@@ -762,31 +940,46 @@
         var card = cards[i];
         stats.cards++;
 
-        var key = (card.getAttribute('data-asset') || card.getAttribute('data-key') || '').trim();
+        if (SITE.status && SITE.statusText) {
+          var statusEl = card.querySelector(SITE.status);
+          var statusText = statusEl ? (statusEl.textContent || '') : '';
+          var statusOk = (statusEl && statusEl.classList.contains('success')) ||
+            statusText.indexOf(SITE.statusText) >= 0;
+          if (!statusOk) continue;
+        }
+
         var img = null;
         if (SITE.media) img = card.querySelector(SITE.media);
-        if (!img) img = card.querySelector(SITE.image);
+        if (!img && SITE.image) img = card.querySelector(SITE.image);
+        if (!img) img = card.querySelector('img');
+        if (!img) continue;
 
-        var src = img
-          ? (img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') ||
-             img.getAttribute('data-original') || '')
-          : '';
+        var src = img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') ||
+          img.getAttribute('data-original') || '';
+        if (!src) continue;
+        stats.withImage++;
 
-        var parsed = key
-          ? LIB.parseAssetKey(key)
-          : { key: '', type: 'other', typeLabel: '素材', name: '' };
-        var nameEl = card.querySelector(SITE.name) || card.querySelector('strong');
+        var nameEl = card.querySelector(SITE.name) || card.querySelector('.asset-card-copy strong') ||
+          card.querySelector('strong');
         var nameText = nameEl ? (nameEl.textContent || '').trim() : '';
-        var altText = img && img.getAttribute('alt') ? img.getAttribute('alt').trim() : '';
-        var name = nameText || altText || parsed.name || ('素材 ' + stats.cards);
+        var altText = img.getAttribute('alt') ? img.getAttribute('alt').trim() : '';
+        if (SITE.altSuffix && altText.slice(-SITE.altSuffix.length) === SITE.altSuffix) {
+          altText = altText.slice(0, -SITE.altSuffix.length).trim();
+        }
+        var selectInput = card.querySelector('.asset-select input[aria-label]');
+        var selectName = selectInput ? String(selectInput.getAttribute('aria-label') || '')
+          .replace(/^选择/, '').trim() : '';
 
+        var key = (card.getAttribute('data-asset') || card.getAttribute('data-key') || '').trim();
+        if (!key) key = String(src).split('?')[0];
+        var parsed = key.indexOf('://') === -1
+          ? LIB.parseAssetKey(key)
+          : { key: key, type: 'other', typeLabel: '素材', name: '' };
+
+        var name = nameText || altText || selectName || parsed.name || ('素材 ' + stats.cards);
         if (!key) key = 'auto:' + name + ':' + stats.cards;
         if (seen[key]) continue;
         seen[key] = true;
-
-        // Only list assets that actually have an image (skip "未生图" cards).
-        if (!src) continue;
-        stats.withImage++;
 
         out.push({
           key: key,
@@ -1122,6 +1315,40 @@
   /* Download dialog                                                     */
   /* ------------------------------------------------------------------ */
 
+  function updateSaveLocationUI() {
+    if (!state.shadow) return;
+    var dirName = state.shadow.getElementById('dir-name');
+    var pickBtn = state.shadow.getElementById('pick-dir-btn');
+    var clearBtn = state.shadow.getElementById('clear-dir-btn');
+    var folderField = state.shadow.getElementById('folder-field');
+    var hint = state.shadow.getElementById('dir-hint');
+    if (!dirName || !pickBtn) return;
+
+    var supported = supportsDirectoryPicker();
+    var skipEl = state.shadow.getElementById('skip-existing');
+    if (state.dirHandle) {
+      dirName.textContent = '已选择：' + state.dirHandle.name;
+      dirName.title = state.dirHandle.name;
+      clearBtn.hidden = false;
+      folderField.hidden = true;
+      hint.textContent = '图片会直接保存到这个文件夹；重名按下面的勾选处理';
+    } else {
+      dirName.textContent = supported ? '默认下载目录' : '当前浏览器不支持自定义文件夹';
+      dirName.title = '';
+      clearBtn.hidden = true;
+      folderField.hidden = false;
+      hint.textContent = supported
+        ? '点「选择文件夹」可保存到任意路径并跳过重名；不选则用浏览器下载目录'
+        : '当前浏览器不支持自定义文件夹，将保存到浏览器下载目录';
+    }
+    if (skipEl) {
+      skipEl.disabled = !state.dirHandle;
+      skipEl.title = state.dirHandle ? '' : '选择文件夹后才能扫描重名';
+    }
+    pickBtn.disabled = !supported;
+    pickBtn.title = supported ? '' : '需要 Chrome / Edge 等 Chromium 浏览器';
+  }
+
   function openModal() {
     if (!state.shadow) return;
     var selected = selectedAssets();
@@ -1133,10 +1360,17 @@
     var folderInput = state.shadow.getElementById('folder-input');
     state.shadow.getElementById('modal-count').textContent = String(selected.length);
     folderInput.value = state.settings.folder || ('漫剧素材_' + LIB.dateStamp());
+    state.shadow.getElementById('skip-existing').checked = state.settings.skipExisting !== false;
+    updateSaveLocationUI();
     updatePreview();
     modal.hidden = false;
     setTimeout(function () {
-      try { folderInput.focus(); folderInput.select(); } catch (e) {}
+      try {
+        if (!state.dirHandle) {
+          folderInput.focus();
+          folderInput.select();
+        }
+      } catch (e) {}
     }, 30);
   }
 
@@ -1163,16 +1397,20 @@
       ext: 'png',
       pattern: 'name'
     });
-    preview.textContent = '下载/' + folder + '/' + filename;
+    preview.textContent = state.dirHandle
+      ? state.dirHandle.name + '/' + filename
+      : '下载/' + folder + '/' + filename;
     preview.title = preview.textContent;
   }
 
   function confirmDownload() {
     if (!state.shadow || state.downloading) return;
     var folderInput = state.shadow.getElementById('folder-input');
+    var skipExisting = state.shadow.getElementById('skip-existing').checked;
     var folder = LIB.sanitizeFilename(folderInput.value, 60);
-    if (!folder) {
-      toast('请填写文件夹名称', 'error');
+
+    if (!state.dirHandle && !folder) {
+      toast('请填写文件夹名称，或选择保存位置', 'error');
       return;
     }
     if (!selectedAssets().length) {
@@ -1180,11 +1418,31 @@
       closeModal();
       return;
     }
+
     state.settings.folder = folder;
     state.settings.pattern = 'name';
+    state.settings.skipExisting = skipExisting;
     saveSettings();
-    closeModal();
-    runDownload(folder, 'name');
+
+    var start = function () {
+      closeModal();
+      runDownload(folder, 'name', {
+        useFs: !!state.dirHandle,
+        overwrite: !skipExisting
+      });
+    };
+
+    if (state.dirHandle) {
+      ensureDirPermission().then(function (granted) {
+        if (!granted) {
+          toast('保存位置权限已失效，请重新点「选择文件夹」', 'error', 5000);
+          return;
+        }
+        start();
+      });
+    } else {
+      start();
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1217,10 +1475,15 @@
     if (btn) btn.disabled = state.selected.size === 0;
   }
 
-  function runDownload(folder, pattern) {
+  function runDownload(folder, pattern, options) {
+    var opts = options || {};
+    var useFs = !!(opts.useFs && state.dirHandle);
+    var overwrite = !!opts.overwrite;
+    var dir = useFs ? state.dirHandle : null;
     var items = selectedAssets();
     var total = items.length;
     var done = 0;
+    var skipped = 0;
     var failed = [];
 
     state.downloading = true;
@@ -1237,10 +1500,25 @@
         return;
       }
       var asset = items[index];
-      setProgress(done, total, '正在处理 ' + (index + 1) + '/' + total + '：' + truncate(asset.name, 16));
+      setProgress(done + skipped, total,
+        '正在处理 ' + (index + 1) + '/' + total + '：' + truncate(asset.name, 16));
 
       getAssetBlob(asset).then(function (blob) {
         return detectExt(blob).then(function (ext) {
+          if (useFs) {
+            var filename = LIB.buildFilename({
+              index: 0,
+              total: total,
+              name: asset.name,
+              typeLabel: asset.typeLabel,
+              ext: ext,
+              pattern: 'name'
+            });
+            return writeBlobToDir(dir, blob, filename, overwrite).then(function (result) {
+              if (result === 'skipped') skipped++;
+              else done++;
+            });
+          }
           return blobToDataUrl(blob).then(function (dataUrl) {
             return sendToBackground({
               type: 'assetgrab:download',
@@ -1255,18 +1533,19 @@
                 dataUrl: dataUrl
               }
             });
+          }).then(function (response) {
+            if (!response || !response.ok) {
+              throw new Error((response && response.error) || '下载失败');
+            }
+            done++;
           });
         });
-      }).then(function (response) {
-        if (!response || !response.ok) {
-          throw new Error((response && response.error) || '下载失败');
-        }
-        done++;
       }).catch(function (error) {
         failed.push({ name: asset.name, error: (error && error.message) || String(error) });
       }).then(function () {
         index++;
-        setProgress(done, total, '已完成 ' + done + ' / ' + total);
+        setProgress(done + skipped, total,
+          '已完成 ' + (done + skipped) + ' / ' + total + (skipped ? '（跳过 ' + skipped + '）' : ''));
         setTimeout(next, 60);
       });
     }
@@ -1274,15 +1553,21 @@
     function finish() {
       state.downloading = false;
       updateSelectionUI();
-      setProgress(done, total, '完成 ' + done + ' / ' + total);
+      setProgress(done + skipped, total, '完成 ' + (done + skipped) + ' / ' + total);
 
-      if (state.cancelRequested) {
-        toast('已取消，已下载 ' + done + ' 个文件');
-      } else if (failed.length) {
-        toast('完成 ' + done + ' 个，失败 ' + failed.length + ' 个：' + truncate(failed[0].error, 40), 'error');
+      var parts = [];
+      if (state.cancelRequested) parts.push('已取消');
+      if (done) parts.push('已保存 ' + done + ' 个');
+      if (skipped) parts.push('跳过 ' + skipped + ' 个重名');
+      if (failed.length) parts.push('失败 ' + failed.length + ' 个：' + truncate(failed[0].error, 40));
+      if (!parts.length) parts.push('没有文件被保存');
+
+      var target = useFs && dir ? '「' + dir.name + '」' : (folder ? '「' + folder + '」' : '');
+      if (done && target) parts.push('位置：' + target);
+
+      toast(parts.join('，'), failed.length ? 'error' : undefined, failed.length ? 7000 : 4000);
+      if (failed.length) {
         try { console.warn('[AssetGrab] failed downloads', failed); } catch (e) {}
-      } else {
-        toast('已下载 ' + done + ' 个文件到「' + folder + '」');
       }
       clearTimeout(progressHideTimer);
       progressHideTimer = setTimeout(hideProgress, 2200);
@@ -1295,20 +1580,42 @@
     var src = asset.src;
     if (!src) return Promise.reject(new Error('图片地址为空'));
 
-    return fetchBlob(src).then(function (blob) {
+    function checkImage(blob) {
       var type = String(blob.type || '').toLowerCase();
       if (type.indexOf('text/') === 0 || type.indexOf('application/json') === 0) {
         throw new Error('返回的不是图片');
       }
       return blob;
-    }).catch(function () {
-      // fetch(blob:) can fail on some engines; fall back to drawing the <img>.
+    }
+
+    function canvasFallback() {
       var img = asset.imgEl && asset.imgEl.isConnected ? asset.imgEl : null;
       if (img && img.complete && img.naturalWidth) {
         return imageToBlob(img);
       }
       return loadImageElement(src).then(imageToBlob);
+    }
+
+    return fetchBlob(src).then(checkImage).catch(function () {
+      if (!/^https?:/i.test(src)) return canvasFallback();
+      return fetchBlobViaBackground(src).then(checkImage).catch(canvasFallback);
     });
+  }
+
+  function fetchBlobViaBackground(url) {
+    return sendToBackground({ type: 'assetgrab:fetch-image', url: url }).then(function (response) {
+      if (!response || !response.ok) {
+        throw new Error((response && response.error) || '后台读取图片失败');
+      }
+      return base64ToBlob(response.base64, response.mime);
+    });
+  }
+
+  function base64ToBlob(base64, mime) {
+    var binary = atob(base64 || '');
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime || 'application/octet-stream' });
   }
 
   function fetchBlob(url) {
@@ -1438,6 +1745,9 @@
     loadSettings().then(function () {
       createUI();
       observePage();
+      loadDirHandle().then(function () {
+        if (state.shadow) updateSaveLocationUI();
+      });
 
       var tries = 0;
       var timer = setInterval(function () {
