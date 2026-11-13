@@ -87,12 +87,16 @@ http://yinghuo.clouded.top:6912
 ```json
 "permissions": ["downloads", "storage", "scripting"],
 "host_permissions": [
+  "https://photo.colo14.top/*",
+  "http://photo.colo14.top/*",
+  "https://yinghuo.clouded.top/*",
   "http://yinghuo.clouded.top/*",
-  "https://yinghuo.clouded.top/*"
+  "https://video-gen-uploads.tos-cn-beijing.volces.com/*"
 ]
 ```
 
 MV2 使用 `"permissions"` 直接包含域名，背景页为 `background.scripts`。
+File System Access 不需要额外 manifest 权限，但需要 HTTPS 页面和用户点击。
 
 ---
 
@@ -410,7 +414,7 @@ node test/unit.mjs
 `test/e2e.mjs` 不依赖 Playwright/Puppeteer，使用 Node 内置 `WebSocket` 直接跑 CDP：
 
 - 启动 `demo/server.mjs`（127.0.0.1:6912）
-- 用 `--host-resolver-rules=MAP yinghuo.clouded.top 127.0.0.1` 让演示页命中真实 host 权限
+- 用 `--host-resolver-rules=MAP photo.colo14.top 127.0.0.1` 让演示页命中真实 host 权限
 - 加载 `dist/qq-mv3` 或 `dist/qq-mv2`
 - 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png`
 - 再删掉 1 个卡片，验证列表 16 行、已选 16
