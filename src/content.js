@@ -26,7 +26,8 @@
       name: '.asset-card-copy strong',
       altSuffix: '资产图',
       status: '.asset-image-status',
-      statusText: '图片已生成'
+      statusText: '图片已生成',
+      download: '.asset-image-status a[href*="/download/"], .asset-image-status a[href*="/gateway/media/jobs/"]'
     },
     {
       // Legacy site: yinghuo.clouded.top (keep working)
@@ -370,6 +371,7 @@
     '.name{font-size:12.5px;font-weight:550;color:#e6e8f1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '.sub{display:flex;align-items:center;gap:6px;min-width:0}',
     '.tag{font-size:10px;padding:1px 5px;border-radius:4px;color:#c4b5fd;background:rgba(139,92,246,.16);flex:none}',
+    '.tag.original{color:#86efac;background:rgba(34,197,94,.14)}',
     '.dim{font-size:10px;color:#71778f;white-space:nowrap}',
     '.dim.warn{color:#f0a35e}',
     /* empty */
@@ -970,8 +972,18 @@
         var selectName = selectInput ? String(selectInput.getAttribute('aria-label') || '')
           .replace(/^选择/, '').trim() : '';
 
+        var downloadUrl = '';
+        if (SITE.download) {
+          var downloadEl = card.querySelector(SITE.download);
+          var href = downloadEl ? (downloadEl.getAttribute('href') || '') : '';
+          if (href) {
+            try { downloadUrl = new URL(href, location.href).href; }
+            catch (e) { downloadUrl = href; }
+          }
+        }
+
         var key = (card.getAttribute('data-asset') || card.getAttribute('data-key') || '').trim();
-        if (!key) key = String(src).split('?')[0];
+        if (!key) key = downloadUrl || String(src).split('?')[0];
         var parsed = key.indexOf('://') === -1
           ? LIB.parseAssetKey(key)
           : { key: key, type: 'other', typeLabel: '素材', name: '' };
@@ -987,6 +999,8 @@
           typeLabel: parsed.typeLabel,
           name: name,
           src: src,
+          downloadUrl: downloadUrl,
+          original: !!downloadUrl,
           el: card,
           imgEl: img,
           w: (img && img.naturalWidth) || 0,
@@ -1019,6 +1033,8 @@
       if (!old) return asset;
       old.name = asset.name;
       old.src = asset.src;
+      old.downloadUrl = asset.downloadUrl;
+      old.original = asset.original;
       old.el = asset.el;
       old.imgEl = asset.imgEl;
       old.missing = asset.missing;
@@ -1180,6 +1196,7 @@
         '<div class="sub"><span class="tag">' + esc(asset.typeLabel) + '</span>' +
         (asset.missing ? '<span class="dim warn">未生图</span>'
           : (asset.w ? '<span class="dim">' + asset.w + '×' + asset.h + '</span>' : '')) +
+        (asset.original ? '<span class="tag original">原图</span>' : '') +
         '</div></div></div>';
     }
     listEl.innerHTML = html;
@@ -1577,15 +1594,31 @@
   }
 
   function getAssetBlob(asset) {
-    var src = asset.src;
-    if (!src) return Promise.reject(new Error('图片地址为空'));
+    var thumb = asset.src;
+    var originalUrl = asset.downloadUrl || '';
+    var primary = originalUrl || thumb;
+    if (!primary) return Promise.reject(new Error('图片地址为空'));
 
-    function checkImage(blob) {
-      var type = String(blob.type || '').toLowerCase();
-      if (type.indexOf('text/') === 0 || type.indexOf('application/json') === 0) {
-        throw new Error('返回的不是图片');
+    function validateImage(blob) {
+      var type = String(blob.type || '').toLowerCase().split(';')[0].trim();
+      if (type.indexOf('image/') === 0) return Promise.resolve(blob);
+      if (type && type !== 'application/octet-stream' && type !== 'binary/octet-stream') {
+        return Promise.reject(new Error('返回的文件不是图片（' + type + '）'));
       }
-      return blob;
+      return blob.slice(0, 32).arrayBuffer().then(function (buffer) {
+        if (!LIB.sniffImageExt(new Uint8Array(buffer))) {
+          throw new Error('返回的文件不是图片');
+        }
+        return blob;
+      });
+    }
+
+    function fetchPrimary() {
+      var timeout = originalUrl ? 60000 : 20000;
+      return fetchBlob(primary, timeout).then(validateImage).catch(function (error) {
+        if (!/^https?:/i.test(primary)) throw error;
+        return fetchBlobViaBackground(primary).then(validateImage);
+      });
     }
 
     function canvasFallback() {
@@ -1593,12 +1626,18 @@
       if (img && img.complete && img.naturalWidth) {
         return imageToBlob(img);
       }
-      return loadImageElement(src).then(imageToBlob);
+      return loadImageElement(thumb).then(imageToBlob);
     }
 
-    return fetchBlob(src).then(checkImage).catch(function () {
-      if (!/^https?:/i.test(src)) return canvasFallback();
-      return fetchBlobViaBackground(src).then(checkImage).catch(canvasFallback);
+    if (originalUrl) {
+      // Original download endpoint: never silently fall back to the webp thumbnail.
+      return fetchPrimary().catch(function (error) {
+        throw new Error('原图下载失败：' + ((error && error.message) || error));
+      });
+    }
+
+    return fetchPrimary().catch(function () {
+      return canvasFallback();
     });
   }
 
@@ -1618,12 +1657,12 @@
     return new Blob([bytes], { type: mime || 'application/octet-stream' });
   }
 
-  function fetchBlob(url) {
+  function fetchBlob(url, timeoutMs) {
     return new Promise(function (resolve, reject) {
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var timer = setTimeout(function () {
         if (controller) controller.abort();
-      }, 20000);
+      }, timeoutMs || 20000);
 
       fetch(url, {
         credentials: 'include',

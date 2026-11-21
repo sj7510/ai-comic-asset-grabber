@@ -116,13 +116,26 @@ function arrayBufferToBase64(buffer) {
 
 /** Fetch an image in the extension context to bypass page CORS. */
 function fetchImage(url) {
-  return fetch(url, { credentials: 'include', cache: 'no-store' }).then(function (response) {
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timer = setTimeout(function () {
+    if (controller) controller.abort();
+  }, 60000);
+
+  return fetch(url, {
+    credentials: 'include',
+    cache: 'no-store',
+    signal: controller ? controller.signal : undefined
+  }).then(function (response) {
+    clearTimeout(timer);
     if (!response.ok) throw new Error('HTTP ' + response.status);
     var mime = response.headers.get('content-type') || '';
     return response.arrayBuffer().then(function (buffer) {
       if (!buffer.byteLength) throw new Error('图片内容为空');
       return { base64: arrayBufferToBase64(buffer), mime: mime };
     });
+  }).catch(function (error) {
+    clearTimeout(timer);
+    throw error;
   });
 }
 

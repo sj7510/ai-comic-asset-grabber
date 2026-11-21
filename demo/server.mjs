@@ -1,7 +1,7 @@
 /**
  * Tiny static server for the demo page.
  * The page is served on port 6912 so that the extension's host permission
- * (http://yinghuo.clouded.top/*) matches when Chrome maps the host to 127.0.0.1.
+ * (http://photo.colo14.top/*) matches when Chrome maps the host to 127.0.0.1.
  *
  * Usage: node demo/server.mjs
  */
@@ -26,6 +26,19 @@ export function startServer(port = 6912, host = '127.0.0.1') {
     try {
       const url = new URL(req.url, `http://${req.headers.host || host}`);
       let pathname = decodeURIComponent(url.pathname);
+
+      // Simulates the platform's "下载图片" endpoint (original-quality file).
+      if (pathname.startsWith('/gateway/media/jobs/')) {
+        const body = await readFile(join(root, '..', 'src', 'icons', 'icon128.png'));
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Disposition': 'attachment; filename="original.png"',
+          'Cache-Control': 'no-store'
+        });
+        res.end(body);
+        return;
+      }
+
       if (pathname === '/') pathname = '/index.html';
       const target = normalize(join(root, pathname));
       if (!target.startsWith(root)) {

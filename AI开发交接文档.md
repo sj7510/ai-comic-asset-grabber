@@ -1,6 +1,6 @@
 # 漫剧素材抓取插件 · AI 开发交接文档
 
-> 最后更新：2026-11-13（v1.1.0）  
+> 最后更新：2026-11-21（v1.2.0）  
 > 项目目录：`ai-comic-asset-grabber/`  
 > 用途：把这份文档连同代码一起交给任何 AI Agent，让它先读这里，再改代码。
 
@@ -21,8 +21,9 @@
 6. 不要重新加回「未生图」卡片，列表只显示有图片的「已生成」素材。
 7. 不要恢复「离屏缓存」：卡片离开 DOM 后，列表和选中状态都要一起删掉。
 8. 新站点只认状态文案「图片已生成」；`generating` / failed 卡片不要进列表。
-9. 自定义保存位置依赖 File System Access API：目录 handle 存在 IndexedDB，写入前必须检查重名；默认「跳过重名」。
-10. 交互文案用中文，安装文档要写到非技术人员能照着点。
+9. 新站下载必须走 `.asset-image-status a[href*="/download/"]` 原图接口，**不要用 `img.media-generation-content` 的 WebP 缩略图**；原图失败要报错，不能静默降级。
+10. 自定义保存位置依赖 File System Access API：目录 handle 存在 IndexedDB，写入前必须检查重名；默认「跳过重名」。
+11. 交互文案用中文，安装文档要写到非技术人员能照着点。
 
 ---
 
@@ -196,10 +197,11 @@ ai-comic-asset-grabber/
 - 卡片：`article.asset-card`。
 - 状态：`.asset-image-status`，文本必须包含 **「图片已生成」**，或带 `success` 类；`生成中` / 失败卡片跳过。
 - 名称：`.asset-card-copy strong`；回退 `img[alt]`（去掉结尾「资产图」）→ `.asset-select input[aria-label]`（去掉开头「选择」）。
-- 图片：`img.media-generation-content`；回退 `.asset-image-frame img`，再回退 `img`。
-- 没有 `data-asset`；key 用图片 URL 去掉 query（`https://...png`），保证同一张图在重扫时稳定。
+- 缩略图：`img.media-generation-content`；回退 `.asset-image-frame img`，再回退 `img`。**只用于面板预览**。
+- 原图：`.asset-image-status a[href*="/download/"]`，href 形如 `/gateway/media/jobs/media_xxx/download/0`；下载时优先请求它。
+- 没有 `data-asset`；key 优先用原图下载 URL，其次缩略图 URL 去掉 query，保证重扫稳定。
 - 类型未知，统一 `type=other`、`typeLabel=素材`。
-- 图片是 CDN 上的完整生成图（不是 640 预览），host 为 `video-gen-uploads.tos-cn-beijing.volces.com`。
+- 缩略图是 WebP（`video-gen-uploads.tos-cn-beijing.volces.com`），画质差；原图必须走下载链接。
 
 ### 5.2 旧站（兼容）：`yinghuo.clouded.top`
 
@@ -227,7 +229,8 @@ var ADAPTERS = [
     name: '.asset-card-copy strong',
     altSuffix: '资产图',
     status: '.asset-image-status',
-    statusText: '图片已生成'
+    statusText: '图片已生成',
+    download: '.asset-image-status a[href*="/download/"]'
   },
   {
     hosts: ['yinghuo.clouded.top'],
@@ -242,17 +245,19 @@ var SITE = pickSite();   // 按 location.hostname 选
 
 ### 5.4 图片字节怎么拿
 
-- 新站是跨域 HTTPS：
-  1. 先尝试内容脚本 `fetch(src)`（CDN 允许 CORS 时最快）；
-  2. 失败则 `chrome.runtime.sendMessage({type:'assetgrab:fetch-image', url})`；
-  3. 后台用扩展权限 `fetch`，返回 base64 + MIME；
-  4. 内容脚本转 Blob，写入本地目录或转 data URL。
+- **新站优先原图**：`asset.downloadUrl`（相对 `/gateway/media/jobs/.../download/0` 解析成绝对 URL）。
+  1. 内容脚本 `fetch(downloadUrl, {credentials:'include'})`（同源，带登录 Cookie）；
+  2. 失败则后台 `fetch-image` 兜底（扩展 host 权限）；
+  3. 校验返回 MIME / 文件头必须是图片；**原图失败直接报错，不静默回退到 WebP**；
+  4. 拿到 Blob 后写本地目录或转 data URL。
+- 缩略图 `asset.src`（WebP）只用于面板预览，不用于下载。
 - 旧站是 `blob:`：内容脚本直接 `fetch`；失败时把 `<img>` 画进 canvas 兜底。
-- background 需要 `video-gen-uploads.tos-cn-beijing.volces.com` 的 host 权限；CDN 换域名时必须同步 manifest。
+- background 需要 `video-gen-uploads.tos-cn-beijing.volces.com` 的 host 权限（缩略图 CDN）；原图接口与页面同源。
 
 ### 5.5 画质
 
-- 新站 `src` 指向 CDN 上的生成结果，通常是原图，不是 640 预览。
+- 新站 `img.media-generation-content` 是 **WebP 缩略图**，画质差；下载必须走 `downloadUrl` 原图接口。
+- 面板行会带「原图」标签表示存在原图链接。
 - 旧站 `data-cache` 是 `...|640`，抓到的是 640 宽预览图。
 
 ---
@@ -416,7 +421,7 @@ node test/unit.mjs
 - 启动 `demo/server.mjs`（127.0.0.1:6912）
 - 用 `--host-resolver-rules=MAP photo.colo14.top 127.0.0.1` 让演示页命中真实 host 权限
 - 加载 `dist/qq-mv3` 或 `dist/qq-mv2`
-- 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png`
+- 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 17 个「原图」标签 → 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png` → 文件 2515 字节（证明走原图接口，不是 ~280KB 缩略图）
 - 再删掉 1 个卡片，验证列表 16 行、已选 16
 - 用 PointerEvent 拖标题栏，验证面板 left 移动 ≥100px
 
@@ -454,8 +459,8 @@ https://cdn.npmmirror.com/binaries/chrome-for-testing/<version>/win64/chrome-win
 
 ### 已验证环境
 
-- Edge 92 + `dist/qq-mv2`（v1.1.0）：新站演示 DOM 18 卡片 → 17 行；17/17 下载通过；删除卡片同步；拖动通过。
-- Chrome for Testing 157 + `dist/qq-mv3`：v1.0.0 下载/命名/文件夹校验通过；v1.1.0 的扫描/下载逻辑与 MV2 共用，但**新站 MV3 未复测**。
+- Edge 92 + `dist/qq-mv2`（v1.2.0）：新站演示 DOM 18 卡片 → 17 行；17/17 下载通过；下载文件来自原图接口（2515 字节，非 280KB 缩略图）；删除卡片同步；拖动通过。
+- Chrome for Testing 157 + `dist/qq-mv3`：v1.0.0 下载/命名/文件夹校验通过；v1.2.0 的扫描/下载逻辑与 MV2 共用，但**新站 MV3 未复测**。
 - 自定义保存文件夹：File System Access 的系统目录选择器无法自动化，需在真实 HTTPS 页面手动验证（选目录、重名跳过、覆盖、权限失效）。
 - QQ 浏览器：**未实机验证**（本机未安装），只按 Chromium 兼容处理。
 
@@ -536,16 +541,17 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 
 ## 11. 已知限制 / 待办
 
-1. **只有 640 宽预览图**，不是平台原图。需要原图接口。
+1. 新站原图走页面「下载图片」接口；接口失效时直接报错，不静默降级到 WebP 缩略图。
 2. **只扫描当前已渲染的 DOM**；虚拟列表滚出即移除，不会预抓全量。
 3. **跨域 iframe 不支持**；同源 iframe 和开放 Shadow DOM 支持。
 4. **不是浏览器原生侧边栏**，是页面内浮层；切换标签页不跟随。
-5. **QQ 未实机验证**；子目录下载、扩展加载方式可能因版本不同有差异。
+5. **QQ 未实机验证**；自定义目录、子目录下载、扩展加载方式可能因版本不同有差异。
 6. **Firefox / Safari 未实现**。
 7. 面板位置存的是像素值；换显示器/分辨率会做 clamp，但不会按比例缩放。
 8. 没有 i18n，全部中文。
 9. 没有下载失败重试按钮；失败只在 toast 里提示。
-10. 未生图卡片被完全跳过，列表中看不到。
+10. 生成中的卡片被完全跳过，列表中看不到。
+11. 自定义保存目录需要 HTTPS + File System Access；不支持时只能回退下载目录。
 
 ---
 
@@ -567,6 +573,14 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 ---
 
 ## 13. 变更记录
+
+### 2026-11-21 · v1.2.0
+
+- 新站下载改走原图接口 `.asset-image-status a[href*="/download/"]`，不再用 WebP 缩略图。
+- 面板新增「原图」标签；缩略图仅预览。
+- 原图获取失败直接报错，不静默降级。
+- 内容脚本 `getAssetBlob` 优先 `downloadUrl`；后台 fetch 增加 60 秒超时与图片文件头校验。
+- 演示服务器新增模拟原图接口；E2E 校验下载文件来自原图接口（2515 字节）。
 
 ### 2026-11-13 · v1.1.0
 
@@ -600,6 +614,7 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 - [ ] `dist/qq-mv3/manifest.json` 包含 `photo.colo14.top`、`yinghuo.clouded.top` 和图片 CDN，权限没被误改。
 - [ ] 面板只显示「图片已生成」的卡片，`生成中` / 失败状态不出现。
 - [ ] 文件名是 `名称.png`，没有 `001_`。
+- [ ] 面板行有「原图」标签；下载走 `/gateway/media/jobs/.../download/0`，不是 WebP 缩略图。
 - [ ] 弹窗能「选择文件夹」；默认勾选「重名时跳过」。
 - [ ] 重名文件会被跳过；取消勾选后能覆盖。
 - [ ] 删掉页面卡片后，面板行数和已选数同步减少。

@@ -230,6 +230,7 @@ async function main() {
         rows: sr.querySelectorAll('.row').length,
         subtitle: sr.getElementById('subtitle').textContent,
         brokenThumbs: thumbs.filter((img) => img.complete && img.naturalWidth === 0).length,
+        originalTags: sr.querySelectorAll('.tag.original').length,
         checked: sr.getElementById('count-selected').textContent,
         total: sr.getElementById('count-total').textContent
       };
@@ -237,6 +238,7 @@ async function main() {
     log('panel summary:', summary);
     if (summary.rows !== 17) throw new Error(`expected 17 rows, got ${summary.rows}`);
     if (summary.brokenThumbs !== 0) throw new Error(`broken thumbnails: ${summary.brokenThumbs}`);
+    if (summary.originalTags !== 17) throw new Error(`expected 17 original tags, got ${summary.originalTags}`);
 
 
 
@@ -344,6 +346,10 @@ async function main() {
     if (basename(first) !== '大胤前军·绯黑前军甲.png') {
       throw new Error('unexpected filename: ' + basename(first));
     }
+    const firstSize = statSync(first).size;
+    log('first file size:', firstSize);
+    // The demo's /download/ endpoint returns icon128.png (2515 bytes); thumbnails are ~280 KB.
+    if (firstSize > 10000) throw new Error('download used the webp thumbnail instead of the original endpoint');
 
     // Removing a card from the page should drop it (and its selection) from the panel.
     await evaluate(`document.querySelector('article.asset-card').remove()`);

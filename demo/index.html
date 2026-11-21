@@ -242,9 +242,10 @@
     });
   }
 
-  function cardHtml(asset, src) {
+  function cardHtml(asset, src, index) {
     var statusText = asset.generating ? '生成中' : '图片已生成';
     var statusClass = asset.generating ? 'generating' : 'success';
+    var downloadHref = '/gateway/media/jobs/media_demo_' + index + '/download/0';
     return '<article class="asset-card">' +
       '<label class="asset-select"><input aria-label="选择' + asset.name + '" type="checkbox"><span></span></label>' +
       '<div class="asset-shot is-done asset-image-wrap">' +
@@ -252,7 +253,8 @@
       '<img class="media-generation-content" alt="' + asset.name + '资产图" loading="lazy" decoding="async" referrerpolicy="no-referrer" src="' + src + '">' +
       '</div>' +
       '<div class="asset-image-status ' + statusClass + '"><span class="asset-status-dot"></span>' +
-      statusText + '<small>任务 media_test</small></div>' +
+      statusText + '<small>任务 media_demo</small>' +
+      '<a href="' + downloadHref + '" target="_blank" rel="noopener noreferrer">下载图片</a></div>' +
       '</div>' +
       '<button type="button" class="asset-card-copy" aria-label="查看' + asset.name + '详情">' +
       '<strong>' + asset.name + '</strong><small>lead</small><em>episode-29</em></button>' +
@@ -265,7 +267,7 @@
   var grid = document.getElementById('grid');
 
   Promise.all(ASSETS.map(drawAsset)).then(function (urls) {
-    grid.innerHTML = ASSETS.map(function (asset, i) { return cardHtml(asset, urls[i]); }).join('');
+    grid.innerHTML = ASSETS.map(function (asset, i) { return cardHtml(asset, urls[i], i); }).join('');
   });
 
   document.getElementById('add-asset').addEventListener('click', function () {
@@ -277,7 +279,7 @@
       colors: ['#24304a', '#9a6ad8']
     };
     drawAsset(asset, index).then(function (url) {
-      grid.insertAdjacentHTML('beforeend', cardHtml(asset, url));
+      grid.insertAdjacentHTML('beforeend', cardHtml(asset, url, index));
     });
   });
 </script>
