@@ -240,6 +240,21 @@ async function main() {
     if (summary.brokenThumbs !== 0) throw new Error(`broken thumbnails: ${summary.brokenThumbs}`);
     if (summary.originalTags !== 17) throw new Error(`expected 17 original tags, got ${summary.originalTags}`);
 
+    const scanInfo = await evaluate(`(() => {
+      const sr = document.getElementById('asset-grabber-host').shadowRoot;
+      const btn = sr.getElementById('scan-info');
+      btn.dispatchEvent(new MouseEvent('mouseenter'));
+      const pop = sr.getElementById('info-pop');
+      return { hidden: pop.hidden, text: pop.textContent };
+    })()`);
+    log('scan info:', scanInfo.text);
+    if (scanInfo.hidden) throw new Error('scan info popover did not open');
+    if (!scanInfo.text.includes('页面卡片：18') ||
+        !scanInfo.text.includes('已识别：17') ||
+        !scanInfo.text.includes('未识别：1')) {
+      throw new Error('scan info counts are wrong: ' + scanInfo.text);
+    }
+
 
 
     // search filter
@@ -351,6 +366,20 @@ async function main() {
     // The demo's /download/ endpoint returns icon128.png (2515 bytes); thumbnails are ~280 KB.
     if (firstSize > 10000) throw new Error('download used the webp thumbnail instead of the original endpoint');
 
+    const downloadInfo = await poll(async () => evaluate(`(() => {
+      const sr = document.getElementById('asset-grabber-host').shadowRoot;
+      const btn = sr.getElementById('download-info');
+      if (btn.hidden) return null;
+      btn.dispatchEvent(new MouseEvent('mouseenter'));
+      const pop = sr.getElementById('info-pop');
+      return { hidden: pop.hidden, text: pop.textContent };
+    })()`), Boolean, 10000, 200);
+    log('download info:', downloadInfo.text);
+    if (downloadInfo.hidden) throw new Error('download info popover did not open');
+    if (!downloadInfo.text.includes('成功：17') || !downloadInfo.text.includes('失败：0')) {
+      throw new Error('download info is wrong: ' + downloadInfo.text);
+    }
+
     // Removing a card from the page should drop it (and its selection) from the panel.
     await evaluate(`document.querySelector('article.asset-card').remove()`);
     const afterRemove = await poll(async () => evaluate(`(() => {
@@ -377,6 +406,35 @@ async function main() {
     })()`);
     log('drag:', { leftBefore: drag.before.left, leftAfter: drag.after.left, topAfter: drag.after.top });
     if (drag.after.left > drag.before.left - 100) throw new Error('panel did not move horizontally');
+
+    // Make one card's original endpoint fail, then check the download failure report.
+    await evaluate(`(() => {
+      const card = document.querySelector('article.asset-card');
+      const link = card.querySelector('.asset-image-status a');
+      link.setAttribute('href', '/gateway/media/jobs/missing/download/0');
+      const sr = document.getElementById('asset-grabber-host').shadowRoot;
+      sr.querySelector('[data-action="rescan"]').click();
+    })()`);
+    await sleep(800);
+    await evaluate(`(() => {
+      const sr = document.getElementById('asset-grabber-host').shadowRoot;
+      sr.querySelector('.row').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      sr.querySelector('[data-action="download"]').click();
+      const input = sr.getElementById('folder-input');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, 'E2E失败测试');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      sr.querySelector('[data-action="modal-confirm"]').click();
+    })()`);
+    const failText = await poll(async () => evaluate(`(() => {
+      const sr = document.getElementById('asset-grabber-host').shadowRoot;
+      const btn = sr.getElementById('download-info');
+      if (btn.hidden) return '';
+      btn.dispatchEvent(new MouseEvent('mouseenter'));
+      return sr.getElementById('info-pop').textContent;
+    })()`), (text) => typeof text === 'string' && text.includes('失败：1'), 20000, 250);
+    log('failure info:', failText);
+    if (!failText.includes('原图下载失败')) throw new Error('failure reason missing: ' + failText);
 
     console.log('\nE2E PASS');
     console.log('download folder:', join(downloadDir, FOLDER));

@@ -29,6 +29,11 @@ export function startServer(port = 6912, host = '127.0.0.1') {
 
       // Simulates the platform's "下载图片" endpoint (original-quality file).
       if (pathname.startsWith('/gateway/media/jobs/')) {
+        if (pathname.indexOf('/missing/') >= 0) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('not found');
+          return;
+        }
         const body = await readFile(join(root, '..', 'src', 'icons', 'icon128.png'));
         res.writeHead(200, {
           'Content-Type': 'image/png',

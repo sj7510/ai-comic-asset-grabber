@@ -1,6 +1,6 @@
 # 漫剧素材抓取插件 · AI 开发交接文档
 
-> 最后更新：2026-11-21（v1.2.0）  
+> 最后更新：2026-11-21（v1.3.0）  
 > 项目目录：`ai-comic-asset-grabber/`  
 > 用途：把这份文档连同代码一起交给任何 AI Agent，让它先读这里，再改代码。
 
@@ -24,6 +24,7 @@
 9. 新站下载必须走 `.asset-image-status a[href*="/download/"]` 原图接口，**不要用 `img.media-generation-content` 的 WebP 缩略图**；原图失败要报错，不能静默降级。
 10. 自定义保存位置依赖 File System Access API：目录 handle 存在 IndexedDB，写入前必须检查重名；默认「跳过重名」。
 11. 交互文案用中文，安装文档要写到非技术人员能照着点。
+12. 识别/下载诊断：`state.scanStats`、`state.scanIssues`、`state.lastDownloadReport`；标题/底部小 `i` 悬浮展示，改扫描计数时同步维护这些字段。
 
 ---
 
@@ -326,6 +327,22 @@ state.selected(Set)           runDownload()
 
 ---
 
+### 诊断信息（v1.3.0）
+
+- `state.scanStats`：
+  - `cards` 页面卡片总数
+  - `withImage` 有非空 `src` 的卡片数（包含状态不通过的）
+  - `recognized` 实际进入面板的数量
+  - `statusSkipped` / `noImage` / `emptySrc` / `duplicates` 分类计数
+  - `frames` / `roots` / `shadows` 扫描范围
+- `state.scanIssues[]`：`{name, reason}`，每张未识别卡片一条；原因如「状态不是『图片已生成』」「图片地址为空（可能加载失败）」「没有找到图片元素」「重复素材」。
+- `state.lastDownloadReport`：`{done, skipped, skippedNames, failed:[{name,error}], cancelled, at, folder}`。
+- UI：
+  - 标题旁 `#scan-info` 悬浮/点击 → `#info-pop`，显示卡片数/有图数/已识别/未识别明细（最多 60 条）。
+  - 底部 `#download-info` 和下载成功 toast 里的小 `i` → 同一个 `#info-pop`，显示成功/跳过/失败明细（最多 40 条）。
+- 统计口径：`cards - recognized = issues.length`；`withImage` 可能大于 `recognized`（状态不通过但图片仍在）。
+- 状态文本要用 `cleanStatusText()`，不要直接 `statusEl.textContent`，否则会把「任务 xxx」「下载图片」拼进原因里。
+
 ## 7. 已踩过的坑（不要重复踩）
 
 ### 7.1 原生 `<select>` 在 QQ 里选项空白
@@ -421,7 +438,8 @@ node test/unit.mjs
 - 启动 `demo/server.mjs`（127.0.0.1:6912）
 - 用 `--host-resolver-rules=MAP photo.colo14.top 127.0.0.1` 让演示页命中真实 host 权限
 - 加载 `dist/qq-mv3` 或 `dist/qq-mv2`
-- 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 17 个「原图」标签 → 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png` → 文件 2515 字节（证明走原图接口，不是 ~280KB 缩略图）
+- 验证：18 个卡片 → 面板 17 行（跳过 1 个「生成中」）→ 17 个「原图」标签 → 识别提示显示「页面卡片 18 / 有图 18 / 已识别 17 / 未识别 1」→ 搜索 1 行 → Shift 连选 5 个 → 全选 17 → 下载 17 个文件 → 文件名 `大胤前军·绯黑前军甲.png` → 文件 2515 字节（证明走原图接口，不是 ~280KB 缩略图）
+- 再模拟 1 个原图接口 404：下载结果显示「成功 15 / 失败 1」，失败明细包含 `原图下载失败：HTTP 404`。
 - 再删掉 1 个卡片，验证列表 16 行、已选 16
 - 用 PointerEvent 拖标题栏，验证面板 left 移动 ≥100px
 
@@ -459,8 +477,8 @@ https://cdn.npmmirror.com/binaries/chrome-for-testing/<version>/win64/chrome-win
 
 ### 已验证环境
 
-- Edge 92 + `dist/qq-mv2`（v1.2.0）：新站演示 DOM 18 卡片 → 17 行；17/17 下载通过；下载文件来自原图接口（2515 字节，非 280KB 缩略图）；删除卡片同步；拖动通过。
-- Chrome for Testing 157 + `dist/qq-mv3`：v1.0.0 下载/命名/文件夹校验通过；v1.2.0 的扫描/下载逻辑与 MV2 共用，但**新站 MV3 未复测**。
+- Edge 92 + `dist/qq-mv2`（v1.3.0）：新站演示 DOM 18 卡片 → 17 行；17/17 下载通过；下载文件来自原图接口（2515 字节）；识别/下载提示、模拟 404 失败明细、删除卡片同步、拖动均通过。
+- Chrome for Testing 157 + `dist/qq-mv3`：v1.0.0 下载/命名/文件夹校验通过；v1.3.0 的扫描/下载逻辑与 MV2 共用，但**新站 MV3 未复测**。
 - 自定义保存文件夹：File System Access 的系统目录选择器无法自动化，需在真实 HTTPS 页面手动验证（选目录、重名跳过、覆盖、权限失效）。
 - QQ 浏览器：**未实机验证**（本机未安装），只按 Chromium 兼容处理。
 
@@ -574,6 +592,14 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 
 ## 13. 变更记录
 
+### 2026-11-21 · v1.3.0
+
+- 标题旁新增识别小 `i`：页面卡片数、有图数、已识别数、未识别图片名与原因。
+- 底部计数与下载成功 toast 新增下载小 `i`：成功、跳过重名、失败数量与失败原因。
+- 扫描统计 `scanStats` 增加分类计数；新增 `scanIssues` 与 `lastDownloadReport`。
+- 状态文本清洗，避免把任务号/「下载图片」拼进失败原因。
+- E2E 增加识别提示、成功提示、模拟 404 失败明细校验。
+
 ### 2026-11-21 · v1.2.0
 
 - 新站下载改走原图接口 `.asset-image-status a[href*="/download/"]`，不再用 WebP 缩略图。
@@ -615,6 +641,7 @@ QQ 安装：`qqbrowser://extensions` → 开发者模式 → 加载已解压 →
 - [ ] 面板只显示「图片已生成」的卡片，`生成中` / 失败状态不出现。
 - [ ] 文件名是 `名称.png`，没有 `001_`。
 - [ ] 面板行有「原图」标签；下载走 `/gateway/media/jobs/.../download/0`，不是 WebP 缩略图。
+- [ ] 标题旁小 `i` 能看到页面卡片/已识别/未识别明细；下载后小 `i` 能看到成功/失败原因。
 - [ ] 弹窗能「选择文件夹」；默认勾选「重名时跳过」。
 - [ ] 重名文件会被跳过；取消勾选后能覆盖。
 - [ ] 删掉页面卡片后，面板行数和已选数同步减少。
